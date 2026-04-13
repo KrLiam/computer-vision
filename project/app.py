@@ -1,154 +1,101 @@
-import torch
-from torch import nn
-from torch.utils.data import DataLoader
-from torchvision.datasets import FashionMNIST
-from torchvision.transforms import ToTensor
 
-device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
-# print(f"Using {device} device")
+import mido
+import datetime
+import cv2
+import os
+import threading
+from collections import deque
 
-MODEL_PATH = "model.pth"
+VIDEO_INPUT = '/dev/video2'
+MIDI_INPUT = '20:0'
 
-class NeuralNetwork(nn.Module):
-    def __init__(self):
-        super(NeuralNetwork, self).__init__()
-        self.flatten = nn.Flatten()
-        self.linear_relu_stack = nn.Sequential(
-            nn.Linear(28*28, 512),
-            nn.ReLU(),
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, 10),
-        )
-
-    def forward(self, x):
-        x = self.flatten(x)
-        logits = self.linear_relu_stack(x)
-        return logits
-
-
-def get_dataset() -> tuple[DataLoader, DataLoader]:
-    print("Downloading dataset.")
-
-    # Download training data from open datasets
-    training_data = FashionMNIST(
-        root="data",
-        train=True,
-        download=True,
-        transform=ToTensor(),
-    )
-    # Download test data from open datasets
-    test_data = FashionMNIST(
-        root="data",
-        train=False,
-        download=True,
-        transform=ToTensor(),
-    )
-
-    batch_size = 64
-    train_dataloader = DataLoader(training_data, batch_size=batch_size)
-    test_dataloader = DataLoader(test_data, batch_size=batch_size)
-
-    return train_dataloader, test_dataloader
-
-
-def train(dataloader, model, loss_fn, optimizer):
-    size = len(dataloader.dataset)
-    model.train()
-    for batch, (X, y) in enumerate(dataloader):
-        X, y = X.to(device), y.to(device)
-
-        # Compute prediction error
-        pred = model(X)
-        loss = loss_fn(pred, y)
-
-        # Backpropagation
-        loss.backward()
-        optimizer.step()
-        optimizer.zero_grad()
-
-        if batch % 100 == 0:
-            loss, current = loss.item(), (batch + 1) * len(X)
-            print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
-
-
-def test(dataloader, model, loss_fn):
-    """
-    Tests the model against the test dataset.
-    """
-    
-    size = len(dataloader.dataset)
-    num_batches = len(dataloader)
-    model.eval()
-    test_loss, correct = 0, 0
-    with torch.no_grad():
-        for X, y in dataloader:
-            X, y = X.to(device), y.to(device)
-            pred = model(X)
-            test_loss += loss_fn(pred, y).item()
-            correct += (pred.argmax(1) == y).type(torch.float).sum().item()
-    test_loss /= num_batches
-    correct /= size
-    print(f"Test:\n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
-
-
-def save_model(model: NeuralNetwork, path: str):
-    torch.save(model.state_dict(), path)
-    print(f"Saved PyTorch Model State to {path}")
-
-def load_model(path: str, model: NeuralNetwork | None = None) -> NeuralNetwork:
-    if model is None:
-        model = NeuralNetwork().to(device)
-    model.load_state_dict(torch.load(path, weights_only=True))
-    return model
-
-
-def run_training():
-    # Dataset
-    train_dataloader, test_dataloader = get_dataset()
-
-    # Initialize model
-    model = NeuralNetwork().to(device)
-    try:
-        load_model(MODEL_PATH, model)
-        print(f"Model '{MODEL_PATH}' loaded successfully!")
-    except FileNotFoundError:
-        ...
-
-    # Optimize model parameters
-    loss_fn = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=1e-3)
-
-    test(test_dataloader, model, loss_fn)
-
-    epochs = 20
-    for t in range(epochs):
-        print(f"Epoch {t+1}\n-------------------------------")
-        train(train_dataloader, model, loss_fn, optimizer)
-        test(test_dataloader, model, loss_fn)
-
-    print("Done!")
-
-    save_model(model, MODEL_PATH)
-
-
-def run_test():
-    # Dataset
-    train_dataloader, test_dataloader = get_dataset()
-    test_data = test_dataloader.dataset
-    classes: list[str] = test_data.classes
-    print(classes)
-
-    # Initialize model
-    model = load_model(MODEL_PATH)
-
-    model.eval()
-    x, y = test_data[0][0], test_data[0][1]
-    with torch.no_grad():
-        x = x.to(device)
-        pred = model(x)
-        predicted, actual = classes[pred[0].argmax(0)], classes[y]
-        print(f'Predicted: "{predicted}", Actual: "{actual}"')
+def format_note(note: int):
+    n = (note // 12) - 1
+    match note % 12:
+        case 0: return f"C{n}"
+        case 1: return f"C#{n}"
+        case 2: return f"D{n}"
+        case 3: return f"D#{n}"
+        case 4: return f"E{n}"
+        case 5: return f"F{n}"
+        case 6: return f"F#{n}"
+        case 7: return f"G{n}"
+        case 8: return f"G#{n}"
+        case 9: return f"A{n}"
+        case 10: return f"A#{n}"
+        case 11: return f"B{n}"
 
 def run():
-    run_test()
+    available_ports = mido.get_input_names()
+    
+    target_port = next((p for p in available_ports if MIDI_INPUT in p), None)
+    
+    if not target_port:
+        print(f"Could not find a MIDI port containing '{MIDI_INPUT}'.")
+        print(f"Available ports: {available_ports}")
+        return
+
+    cap = cv2.VideoCapture(VIDEO_INPUT)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    os.makedirs('frames', exist_ok=True)
+    frame_buffer = deque(maxlen=3)
+
+    midi_log = []
+    pending_saves = []
+
+    def midi_loop():
+        with mido.open_input(target_port) as inport:
+            for msg in inport:
+                midi_log.append(msg)
+
+    midi_thread = threading.Thread(target=midi_loop, daemon=True)
+    midi_thread.start()
+
+    print(f"Listening for MIDI input on: {target_port}...")
+    try:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            frame_buffer.append(frame)
+
+            current_time = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-4]
+            
+            for idx, (c, notes) in reversed(list(enumerate(pending_saves))):
+                if c == 0:
+                    del pending_saves[idx]
+                    notes_str = "_".join(notes)
+                    for frame_idx, b_frame in enumerate(frame_buffer):
+                        filepath = f"frames/{notes_str}_{frame_idx}.png"
+                        cv2.imwrite(filepath, b_frame)
+                        print(f"Saved frame {frame_idx} to {filepath}")
+                else:
+                    pending_saves[idx] = (c - 1, notes)
+
+            if midi_log:
+                print(len(midi_log))
+
+            while midi_log:
+                msg = midi_log.pop(0)
+                if not hasattr(msg, 'note'):
+                    continue
+
+                pressed = msg.type == "note_on"
+                note = msg.note
+                formatted_note = format_note(note)
+
+                if pressed:
+                    c = 1
+                    merge_tolerance = 1
+
+                    if pending_saves and pending_saves[-1][0] - c <= merge_tolerance:
+                        pending_saves[-1][1].append(formatted_note)
+                    else:
+                        pending_saves.append((c, [formatted_note]))
+                else:
+                    print(f"[{current_time}] Released note {formatted_note}")
+    except KeyboardInterrupt:
+        print("\nStopped listening to MIDI input.")
+    finally:
+        cap.release()
