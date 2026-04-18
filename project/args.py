@@ -6,7 +6,26 @@ def parse_args():
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
     # Train subcommand
-    subparsers.add_parser("train", help="Train the neural network model")
+    train_parser = subparsers.add_parser("train", help="Train the neural network model")
+    train_parser.add_argument(
+        "--train-dataset",
+        type=str,
+        default="dataset.pt",
+        help="Path to the training dataset '.pt' file",
+    )
+    train_parser.add_argument(
+        "--test-dataset",
+        type=str,
+        default="dataset.pt",
+        help="Path to the test dataset '.pt' file",
+    )
+    train_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        help="Batch size for training",
+    )
+
 
     # Record subcommand
     record_parser = subparsers.add_parser("record", help="Record MIDI and video frames")

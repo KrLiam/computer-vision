@@ -6,7 +6,8 @@ from torch.utils.data import DataLoader
 from torchvision.datasets import FashionMNIST
 from torchvision.transforms import ToTensor, ToPILImage
 
-from project.dataset import get_fashion_dataset
+from project.dataset import get_fashion_dataset, load_dataset
+from project.midi import tensor_to_notes
 
 device = (
     torch.accelerator.current_accelerator().type
@@ -65,9 +66,8 @@ def train(dataloader, model, loss_fn, optimizer):
         optimizer.step()
         optimizer.zero_grad()
 
-        if batch % 100 == 0:
-            loss, current = loss.item(), (batch + 1) * len(X)
-            print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
+        loss, current = loss.item(), (batch + 1) * len(X)
+        print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
 
 def test(dataloader, model, loss_fn):
@@ -79,15 +79,30 @@ def test(dataloader, model, loss_fn):
     num_batches = len(dataloader)
     model.eval()
     test_loss, correct = 0, 0
+
+    min_pred, max_pred = 1.0, 0.0
+
     with torch.no_grad():
         for X, y in dataloader:
             X, y = X.to(device), y.to(device)
             pred = model(X)
+            # Apply sigmoid to convert logits to probabilities [0.0, 1.0]
+            pred_prob = torch.sigmoid(pred)
+
+            max_pred = max(max_pred, pred_prob.max().item())
+            min_pred = min(min_pred, pred_prob.min().item())
+
+            for y_row, pred_row in zip(y, pred_prob):
+                y_notes = tensor_to_notes(y_row)
+                pred_notes = tensor_to_notes(pred_row)
+                if pred_notes:
+                    print(f"{y_notes} -> {pred_notes}")
+
             test_loss += loss_fn(pred, y).item()
-            correct += (pred.argmax(1) == y).type(torch.float).sum().item()
+            correct += ((pred_prob > 0.5) == (y > 0.5)).all(dim=1).type(torch.float).sum().item()
     test_loss /= num_batches
     correct /= size
-    print(f"Test:\n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
+    print(f"Test:\n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f}, Pred Range: [{min_pred:>0.4f}, {max_pred:>0.4f}]\n")
 
 
 def save_model(model: NeuralNetwork, path: str):
@@ -102,9 +117,11 @@ def load_model(path: str, model: NeuralNetwork | None = None) -> NeuralNetwork:
     return model
 
 
-def run_training():
+def run_training(train_dataset: str, test_dataset: str, batch_size: int = 32):
     # Dataset
-    train_dataloader, test_dataloader = get_fashion_dataset()
+    train_dataloader = load_dataset(train_dataset, batch_size=batch_size)
+    test_dataloader = load_dataset(test_dataset, batch_size=batch_size)
+    print(f"Loaded train dataset '{train_dataset}' and test dataset '{test_dataset}' with batch size {batch_size}")
 
     # Initialize model
     model = NeuralNetwork().to(device)

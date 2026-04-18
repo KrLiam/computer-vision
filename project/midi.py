@@ -37,7 +37,7 @@ def get_note_code(note_str: str) -> int | None:
 
 
 def tensor_to_notes(y: Iterable[float], first_note: int = 36) -> list[int]:
-    return [i + first_note for i, val in enumerate(y) if val == 1.0]
+    return [i + first_note for i, val in enumerate(y) if val > 0.5]
 
 def notes_to_tensor(notes: Iterable[int], num_notes: int = 61) -> torch.Tensor:
     y = torch.zeros(num_notes, dtype=torch.float32)

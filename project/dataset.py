@@ -114,10 +114,10 @@ def build_dataset(
     torch.save(data, output_path)
     print(f"Dataset saved to {output_path}")
 
-def load_dataset(path: str = "dataset.pt", batch_size: int = 32) -> DataLoader:
+def load_dataset(path: str = "dataset.pt", batch_size: int = 32, shuffle: bool = True) -> DataLoader:
     data = torch.load(path)
     dataset = TensorDataset(data['x'], data['y'])
-    return DataLoader(dataset, batch_size=batch_size)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
 
 def dataset_info(path: str, first_note: int = 36):
     loader = load_dataset(path)
@@ -138,3 +138,4 @@ def dataset_info(path: str, first_note: int = 36):
     for i in range(y_tensors.shape[1]):
         note_code = i + first_note
         print(f"{format_note(note_code)}: {distribution[note_code]}")
+

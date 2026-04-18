@@ -7,7 +7,7 @@ def run():
 
     match args.command:
         case "train":
-            run_training()
+            run_training(args.train_dataset, args.test_dataset, args.batch_size)
         case "test":
             run_test()
         case "dataset":
