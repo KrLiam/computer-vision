@@ -22,6 +22,12 @@ pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu12
 pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 ```
 
+Finally, install the remaining of the dependencies.
+
+```bash
+pip install -r requirements.txt
+```
+
 ## Run
 
 ```bash

@@ -6,17 +6,22 @@ from torch.utils.data import DataLoader
 from torchvision.datasets import FashionMNIST
 from torchvision.transforms import ToTensor, ToPILImage
 
-device = torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu"
+device = (
+    torch.accelerator.current_accelerator().type
+    if torch.accelerator.is_available()
+    else "cpu"
+)
 # print(f"Using {device} device")
 
 MODEL_PATH = "model.pth"
+
 
 class NeuralNetwork(nn.Module):
     def __init__(self):
         super(NeuralNetwork, self).__init__()
         self.flatten = nn.Flatten()
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(28*28, 512),
+            nn.Linear(28 * 28, 512),
             nn.ReLU(),
             nn.Linear(512, 512),
             nn.ReLU(),
@@ -82,7 +87,7 @@ def test(dataloader, model, loss_fn):
     """
     Tests the model against the test dataset.
     """
-    
+
     size = len(dataloader.dataset)
     num_batches = len(dataloader)
     model.eval()
@@ -101,6 +106,7 @@ def test(dataloader, model, loss_fn):
 def save_model(model: NeuralNetwork, path: str):
     torch.save(model.state_dict(), path)
     print(f"Saved PyTorch Model State to {path}")
+
 
 def load_model(path: str, model: NeuralNetwork | None = None) -> NeuralNetwork:
     if model is None:
@@ -122,7 +128,7 @@ def run_training():
         ...
 
     # Optimize model parameters
-    loss_fn = nn.CrossEntropyLoss()
+    loss_fn = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.SGD(model.parameters(), lr=1e-3)
 
     test(test_dataloader, model, loss_fn)
@@ -158,6 +164,3 @@ def run_test():
         pred = model(x)
         predicted, actual = classes[pred[0].argmax(0)], classes[y]
         print(f'Predicted: "{predicted}", Actual: "{actual}"')
-
-def run():
-    run_test()
