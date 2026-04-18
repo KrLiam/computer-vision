@@ -6,6 +6,8 @@ from torch.utils.data import DataLoader
 from torchvision.datasets import FashionMNIST
 from torchvision.transforms import ToTensor, ToPILImage
 
+from project.dataset import get_fashion_dataset
+
 device = (
     torch.accelerator.current_accelerator().type
     if torch.accelerator.is_available()
@@ -19,49 +21,34 @@ MODEL_PATH = "model.pth"
 class NeuralNetwork(nn.Module):
     def __init__(self):
         super(NeuralNetwork, self).__init__()
-        self.flatten = nn.Flatten()
-        self.linear_relu_stack = nn.Sequential(
-            nn.Linear(28 * 28, 512),
+
+        self.features = nn.Sequential(
+            # Input shape: (Batch, 3, 128, 640)
+            nn.Conv2d(3, 16, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Linear(512, 512),
+            nn.MaxPool2d(kernel_size=2, stride=2), 
+            # Current shape: (16, 64, 320)
+            
+            nn.Conv2d(16, 32, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Linear(512, 10),
+            nn.MaxPool2d(kernel_size=2, stride=2)
+            # Current shape: (32, 32, 160)
         )
+        
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            # 32 channels * 32 height * 160 width = 163,840
+            nn.Linear(32 * 32 * 160, 512),
+            nn.ReLU(),
+            nn.Linear(512, 61) # 61 output nodes for keys
+        )
+
         print("Built neural network")
 
     def forward(self, x):
-        print("x", x)
-        x = self.flatten(x)
-        print("flatten", x)
-        logits = self.linear_relu_stack(x)
-        print("logits", logits)
-        return logits
-
-
-def get_dataset() -> tuple[DataLoader, DataLoader]:
-    print("Downloading dataset.")
-
-    # Download training data from open datasets
-    training_data = FashionMNIST(
-        root="data",
-        train=True,
-        download=True,
-        transform=ToTensor(),
-    )
-    # Download test data from open datasets
-    test_data = FashionMNIST(
-        root="data",
-        train=False,
-        download=True,
-        transform=ToTensor(),
-    )
-
-    batch_size = 64
-    train_dataloader = DataLoader(training_data, batch_size=batch_size)
-    test_dataloader = DataLoader(test_data, batch_size=batch_size)
-
-    return train_dataloader, test_dataloader
-
+        x = self.features(x)
+        x = self.classifier(x)
+        return x
 
 def train(dataloader, model, loss_fn, optimizer):
     size = len(dataloader.dataset)
@@ -117,7 +104,7 @@ def load_model(path: str, model: NeuralNetwork | None = None) -> NeuralNetwork:
 
 def run_training():
     # Dataset
-    train_dataloader, test_dataloader = get_dataset()
+    train_dataloader, test_dataloader = get_fashion_dataset()
 
     # Initialize model
     model = NeuralNetwork().to(device)
@@ -146,7 +133,7 @@ def run_training():
 
 def run_test():
     # Dataset
-    train_dataloader, test_dataloader = get_dataset()
+    train_dataloader, test_dataloader = get_fashion_dataset()
     test_data = test_dataloader.dataset
     classes: list[str] = test_data.classes
 

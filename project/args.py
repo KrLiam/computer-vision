@@ -32,6 +32,32 @@ def parse_args():
         help="Glob patterns for image files to crop",
     )
 
+    # Dataset subcommand
+    dataset_parser = subparsers.add_parser("dataset", help="Dataset operations")
+    dataset_subparsers = dataset_parser.add_subparsers(dest="dataset_command", help="Dataset commands")
+
+    dataset_build_parser = dataset_subparsers.add_parser("build", help="Build the dataset from images")
+    dataset_build_parser.add_argument(
+        "--images",
+        type=str,
+        nargs="+",
+        required=True,
+        help="Glob patterns for image files to include in the dataset",
+    )
+    dataset_build_parser.add_argument(
+        "--output",
+        type=str,
+        default="dataset.pt",
+        help="Output dataset path, a '.pt' file",
+    )
+
+    dataset_info_parser = dataset_subparsers.add_parser("info", help="Get dataset information")
+    dataset_info_parser.add_argument(
+        "--path",
+        type=str,
+        default="dataset.pt",
+        help="Path to the dataset '.pt' file",
+    )
 
     # Test command
     subparsers.add_parser("test", help="Run model inference on a random test sample")

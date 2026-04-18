@@ -4,3 +4,4 @@ data
 *.pth
 frames*
 config.json
+*pt
