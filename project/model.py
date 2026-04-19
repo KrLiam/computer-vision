@@ -24,24 +24,29 @@ class NeuralNetwork(nn.Module):
         super(NeuralNetwork, self).__init__()
 
         self.features = nn.Sequential(
-            # Input shape: (Batch, 3, 128, 640)
+            # Shape: (B, 3, 128, 640)
             nn.Conv2d(3, 16, kernel_size=3, padding=1),
+            # Shape: (B, 16, 128, 640)
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2), 
-            # Current shape: (16, 64, 320)
+            # Shape: (B, 16, 64, 320)
             
             nn.Conv2d(16, 32, kernel_size=3, padding=1),
+            # Shape: (B, 32, 64, 320)
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2)
-            # Current shape: (32, 32, 160)
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            # Shape: (B, 32, 32, 160)
         )
         
         self.classifier = nn.Sequential(
+            # Shape: (B, 32, 32, 160)
             nn.Flatten(),
-            # 32 channels * 32 height * 160 width = 163,840
+            # Shape: (B, 32 * 32 * 160)
             nn.Linear(32 * 32 * 160, 512),
+            # Shape: (B, 512)
             nn.ReLU(),
             nn.Linear(512, 61) # 61 output nodes for keys
+            # Shape: (B, 61)
         )
 
         print("Built neural network")
@@ -132,8 +137,9 @@ def run_training(train_dataset: str, test_dataset: str, batch_size: int = 32):
         ...
 
     # Optimize model parameters
-    loss_fn = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=1e-3)
+
+    loss_fn = nn.BCEWithLogitsLoss() # Multi-class
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     test(test_dataloader, model, loss_fn)
 
