@@ -8,6 +8,7 @@ from project.crop import CroppingRegion
 from project.dataset import frames_to_tensor
 from project.midi import format_note, tensor_to_notes
 from project.model import DEVICE, NeuralNetwork, load_model
+from project.record import video_capture
 
 # Disable Kivy's argument parser to avoid conflicts with our own argparse
 os.environ["KIVY_NO_ARGS"] = "1"
@@ -36,8 +37,7 @@ class VisionApp(App):
         self.frame_buffer = deque(maxlen=3)
         self.detected_notes = []
 
-        self.cap = cv2.VideoCapture(self.video_device)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self.cap = video_capture(self.video_device)
         frame = self.get_frame()
         if frame is not None:
             self.frame_buffer.append(frame)

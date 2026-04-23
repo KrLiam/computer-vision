@@ -1,10 +1,14 @@
 import datetime
 import os
+from pathlib import Path
 import threading
 from collections import deque
 
 import cv2
+from cv2.typing import MatLike
 import mido
+
+from project.crop import CroppingRegion
 
 # Disable Kivy's argument parser to avoid conflicts with our own argparse
 os.environ["KIVY_NO_ARGS"] = "1"
@@ -13,6 +17,7 @@ from kivy.clock import Clock
 from kivy.graphics.texture import Texture
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.image import Image
+from kivy.uix.checkbox import CheckBox
 from kivy.uix.label import Label
 
 from project.midi import format_note
@@ -47,6 +52,27 @@ class MidiListener:
         self._running = False
 
 
+def video_capture(device: str) -> cv2.VideoCapture:
+    if device.isdigit():
+        # windows
+        device = int(device)
+        cap = cv2.VideoCapture(device, cv2.CAP_DSHOW)
+    else:
+        # elsewhere
+        cap = cv2.VideoCapture(device)
+
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    
+    return cap
+
+
+def labelled_checkbox(label: str, active: bool = False):
+    box = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
+    box.add_widget(Label(text=label, size_hint_x=0.3))
+    checkbox = CheckBox(active=active, size_hint_x=0.7)
+    box.add_widget(checkbox)
+    return checkbox
+
 class RecordingApp(App):
     def __init__(self, target_port: str, video_device: str, **kwargs):
         super().__init__(**kwargs)
@@ -55,6 +81,15 @@ class RecordingApp(App):
         self.cap = None
         self.frame_buffer = deque(maxlen=3)
         self.pending_notes = []
+
+        self.cap = video_capture(self.video_device)
+        if not self.cap.isOpened():
+            print(f"Camera device '{self.video_device}' is invalid.")
+            exit()
+
+        frame = self.get_frame()
+        if frame is not None:
+            self.frame_buffer.append(frame)
 
     def build(self):
         os.makedirs("frames", exist_ok=True)
@@ -65,6 +100,23 @@ class RecordingApp(App):
         layout.add_widget(self.camera_view)
 
         sidebar = BoxLayout(orientation='vertical', size_hint=(0.3, 1.0))
+
+        w, h = 0, 0
+        frame = self.frame_buffer[0]
+        if frame is not None:
+            h, w, _ = frame.shape
+        self.cropping_region = CroppingRegion(default_w=w, default_h=h)
+        sidebar.add_widget(self.cropping_region.build())
+
+        self.flip_x_cb = labelled_checkbox("Flip X:")
+        sidebar.add_widget(self.flip_x_cb.parent)
+
+        self.flip_y_cb = labelled_checkbox("Flip Y:")
+        sidebar.add_widget(self.flip_y_cb.parent)
+
+        self.gray_cb = labelled_checkbox("Grayscale:")
+        sidebar.add_widget(self.gray_cb.parent)
+
         self.captured_label = Label(
             text="Captured: ",
             valign='top',
@@ -75,15 +127,22 @@ class RecordingApp(App):
         sidebar.add_widget(self.captured_label)
         layout.add_widget(sidebar)
 
-        self.cap = cv2.VideoCapture(self.video_device)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
         self.midi_listener.start()
 
         # Match Kivy refresh interval to 30 FPS.
         Clock.schedule_interval(self.update, 1.0 / 30.0)
 
         return layout
+
+    def get_frame(self) -> MatLike | None:
+        if not self.cap or not self.cap.isOpened():
+            return None
+
+        ret, frame = self.cap.read()
+        if not ret:
+            return None
+
+        return frame
 
     def update(self, dt):
         if not self.cap or not self.cap.isOpened():
@@ -99,7 +158,29 @@ class RecordingApp(App):
         self._process_midi()
         self._update_sidebar()
 
+    def _transform_frame(self, frame, outline: bool = False):
+        if self.gray_cb.active:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+
+        if self.flip_y_cb.active:
+            frame = cv2.flip(frame, 0)
+
+        if self.flip_x_cb.active:
+            frame = cv2.flip(frame, 1)
+            
+        if outline:
+            self.cropping_region.draw_outline(frame)
+        else:
+            frame = self.cropping_region.apply(frame)
+
+        return frame
+
+
     def _update_camera_view(self, frame):
+        frame = frame.copy()
+        frame = self._transform_frame(frame, outline=True)
+
         # Convert BGR to RGB and flip vertically for Kivy Texture
         buf = cv2.flip(frame, 0).tobytes()
         texture = Texture.create(size=(frame.shape[1], frame.shape[0]), colorfmt='bgr')
@@ -112,8 +193,10 @@ class RecordingApp(App):
                 del self.pending_notes[idx]
                 notes_str = "_".join(notes)
                 for frame_idx, b_frame in enumerate(self.frame_buffer):
-                    filepath = f"frames/{notes_str}_{frame_idx}.png"
-                    cv2.imwrite(filepath, b_frame)
+                    filepath = Path("frames") / f"{notes_str}_{frame_idx}.png"
+
+                    cropped = self._transform_frame(b_frame)
+                    cv2.imwrite(filepath, cropped)
                     print(f"Saved frame {frame_idx} to {filepath}")
             else:
                 self.pending_notes[idx] = (c - 1, notes)
