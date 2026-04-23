@@ -11,13 +11,17 @@ def run():
         case "test":
             run_test()
         case "dataset":
-            if args.dataset_command == "build":
-                build_dataset(args.images, args.output)
-            elif args.dataset_command == "info":
-                dataset_info(args.path)
-        case "record":
-            from project.record import run_recording
-            run_recording(args.midi_name, args.camera)
+            match args.dataset_command:
+                case "build":
+                    build_dataset(args.images, args.output)
+                case "info":
+                    dataset_info(args.path)
+                case "record":
+                    from project.record import run_recording
+                    run_recording(args.midi_name, args.camera)
         case "crop":
             from project.crop import run_cropping
             run_cropping(args.path)
+        case "vision":
+            from project.vision import run_vision
+            run_vision(args.model, args.camera)

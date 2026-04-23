@@ -26,9 +26,34 @@ def parse_args():
         help="Batch size for training",
     )
 
+    # Crop subcommand
+    crop_parser = subparsers.add_parser("crop", help="Crop dataset images")
+    crop_parser.add_argument(
+        "--path",
+        type=str,
+        nargs="+",
+        help="Glob patterns for image files to crop",
+    )
 
-    # Record subcommand
-    record_parser = subparsers.add_parser("record", help="Record MIDI and video frames")
+    # Vision subcommand
+    vision_parser = subparsers.add_parser("vision", help="The real-time vision interface")
+    vision_parser.add_argument(
+        "--model",
+        type=str,
+        help="Path for the trained model to use.",
+    )
+    vision_parser.add_argument(
+        "--camera",
+        type=str,
+        required=True,
+        help="Path to the video input device (Example: /dev/video3)",
+    )
+
+    # Dataset subcommand
+    dataset_parser = subparsers.add_parser("dataset", help="Dataset operations")
+    dataset_subparsers = dataset_parser.add_subparsers(dest="dataset_command", help="Dataset commands")
+
+    record_parser = dataset_subparsers.add_parser("record", help="Record MIDI and video frames")
     record_parser.add_argument(
         "--camera",
         type=str,
@@ -41,19 +66,6 @@ def parse_args():
         required=True,
         help="Substring of the MIDI device name to connect to (Example: Casio)",
     )
-
-    # Crop subcommand
-    crop_parser = subparsers.add_parser("crop", help="Crop dataset images")
-    crop_parser.add_argument(
-        "--path",
-        type=str,
-        nargs="+",
-        help="Glob patterns for image files to crop",
-    )
-
-    # Dataset subcommand
-    dataset_parser = subparsers.add_parser("dataset", help="Dataset operations")
-    dataset_subparsers = dataset_parser.add_subparsers(dest="dataset_command", help="Dataset commands")
 
     dataset_build_parser = dataset_subparsers.add_parser("build", help="Build the dataset from images")
     dataset_build_parser.add_argument(

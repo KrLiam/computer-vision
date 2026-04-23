@@ -9,7 +9,7 @@ from torchvision.transforms import ToTensor, ToPILImage
 from project.dataset import get_fashion_dataset, load_dataset
 from project.midi import tensor_to_notes
 
-device = (
+DEVICE = (
     torch.accelerator.current_accelerator().type
     if torch.accelerator.is_available()
     else "cpu"
@@ -60,7 +60,7 @@ def train(dataloader, model, loss_fn, optimizer):
     size = len(dataloader.dataset)
     model.train()
     for batch, (X, y) in enumerate(dataloader):
-        X, y = X.to(device), y.to(device)
+        X, y = X.to(DEVICE), y.to(DEVICE)
 
         # Compute prediction error
         pred = model(X)
@@ -89,7 +89,7 @@ def test(dataloader, model, loss_fn):
 
     with torch.no_grad():
         for X, y in dataloader:
-            X, y = X.to(device), y.to(device)
+            X, y = X.to(DEVICE), y.to(DEVICE)
             pred = model(X)
             # Apply sigmoid to convert logits to probabilities [0.0, 1.0]
             pred_prob = torch.sigmoid(pred)
@@ -117,7 +117,7 @@ def save_model(model: NeuralNetwork, path: str):
 
 def load_model(path: str, model: NeuralNetwork | None = None) -> NeuralNetwork:
     if model is None:
-        model = NeuralNetwork().to(device)
+        model = NeuralNetwork().to(DEVICE)
     model.load_state_dict(torch.load(path, weights_only=True))
     return model
 
@@ -129,7 +129,7 @@ def run_training(train_dataset: str, test_dataset: str, batch_size: int = 32):
     print(f"Loaded train dataset '{train_dataset}' and test dataset '{test_dataset}' with batch size {batch_size}")
 
     # Initialize model
-    model = NeuralNetwork().to(device)
+    model = NeuralNetwork().to(DEVICE)
     try:
         load_model(MODEL_PATH, model)
         print(f"Model '{MODEL_PATH}' loaded successfully!")
@@ -170,7 +170,7 @@ def run_test():
     ToPILImage()(x).show()
 
     with torch.no_grad():
-        x = x.to(device)
+        x = x.to(DEVICE)
         pred = model(x)
         predicted, actual = classes[pred[0].argmax(0)], classes[y]
         print(f'Predicted: "{predicted}", Actual: "{actual}"')

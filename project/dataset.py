@@ -1,7 +1,9 @@
 import glob
 import os
 from collections import defaultdict
+from typing import Iterable
 
+from cv2.typing import MatLike
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader, TensorDataset
@@ -33,6 +35,21 @@ def get_fashion_dataset() -> tuple[DataLoader, DataLoader]:
     test_dataloader = DataLoader(test_data, batch_size=batch_size)
 
     return train_dataloader, test_dataloader
+
+
+def frames_to_tensor(
+    imgs: Iterable[Image.Image | MatLike],
+    transform = ToTensor()
+) -> torch.Tensor:
+    converted: list[torch.Tensor] = []
+    for img in imgs:
+        if isinstance(img, MatLike):
+            img = Image.fromarray(img)
+
+        img = img.convert("L")
+        converted.append(transform(img).squeeze(0))
+
+    return torch.stack(converted)
 
 
 def build_dataset(
@@ -69,7 +86,6 @@ def build_dataset(
                 
     x_tensors = []
     y_tensors = []
-    transform = ToTensor()
     
     for key, frames in samples.items():
         name = os.path.basename(key)
@@ -81,16 +97,9 @@ def build_dataset(
             
         frames.sort(key=lambda x: x[0])
         
-        images = []
-        for _, path in frames:
-            img = Image.open(path).convert("L")
-            img_tensor = transform(img).squeeze(0)  # Shape: (height, width)
-            images.append(img_tensor)
-            
-        if not images:
-            continue
-            
-        x = torch.stack(images)  # Shape: (frames, height, width)
+        images = [Image.open(path) for _, path in frames]
+        x = frames_to_tensor(images) # Shape: (frames, height, width)
+        x = x.to(torch.float8_e4m3fn)
         
         y = torch.zeros(num_notes, dtype=torch.float32)
         for note_str in notes:
