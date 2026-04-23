@@ -8,7 +8,7 @@ import cv2
 from cv2.typing import MatLike
 import mido
 
-from project.crop import CroppingRegion
+from project.crop import CroppingRegion, text_input
 
 # Disable Kivy's argument parser to avoid conflicts with our own argparse
 os.environ["KIVY_NO_ARGS"] = "1"
@@ -118,6 +118,9 @@ class RecordingApp(App):
         self.gray_cb = labelled_checkbox("Grayscale:")
         sidebar.add_widget(self.gray_cb.parent)
 
+        self.output_subfolder_input = text_input("Subfolder: ", changed=self._update_subfolder, default="")
+        sidebar.add_widget(self.output_subfolder_input.parent)
+
         self.captured_label = Label(
             text="Captured: ",
             valign='top',
@@ -217,7 +220,16 @@ class RecordingApp(App):
                 del self.pending_notes[idx]
                 notes_str = "_".join(notes)
                 for frame_idx, b_frame in enumerate(self.frame_buffer):
-                    filepath = Path("frames") / f"{notes_str}_{frame_idx}.png"
+                    filepath = Path("frames")
+                    if self.output_subfolder:
+                        data = {
+                            "n": len(notes),
+                            "notes": notes_str,
+                            "frame": frame_idx,
+                        }
+                        filepath /= self.output_subfolder.format(**data)
+                    if not filepath.suffix:
+                        filepath /= f"{notes_str}_{frame_idx}.png"
 
                     cropped = self._transform_frame(b_frame)
                     cv2.imwrite(filepath, cropped)
@@ -262,6 +274,9 @@ class RecordingApp(App):
             lines.append('+'.join(notes))
         self.captured_label.text = ", ".join(lines)
 
+    def _update_subfolder(self, *args):
+        self.output_subfolder = self.output_subfolder_input.text.strip()
+        
     def on_stop(self):
         if self.cap:
             self.cap.release()

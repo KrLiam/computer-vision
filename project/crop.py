@@ -31,6 +31,15 @@ class ImageEntry:
         return cv2.imread(self.path)
 
 
+def text_input(label: str, changed = None, default: str = ""):
+    box = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
+    box.add_widget(Label(text=label, size_hint_x=0.3))
+    input = TextInput(text=default, multiline=False, size_hint_x=0.7)
+    input.bind(text=changed)
+    box.add_widget(input)
+    return input
+
+
 class CroppingRegion:
     def __init__(self, on_change=None, default_w=0, default_h=0):
         self.on_change = on_change
@@ -57,44 +66,13 @@ class CroppingRegion:
         self.points_container = BoxLayout(orientation='vertical', size_hint_y=None, height=60)
         layout.add_widget(self.points_container)
 
-        # Input P1
-        self.p1_box = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
-        self.p1_box.add_widget(Label(text="P1 (x, y):", size_hint_x=0.3))
-        self.p1_input = TextInput(text="0, 0", multiline=False, size_hint_x=0.7)
-        self.p1_input.bind(text=self._on_text_change)
-        self.p1_box.add_widget(self.p1_input)
-
-        # Input P2
-        self.p2_box = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
-        self.p2_box.add_widget(Label(text="P2 (x, y):", size_hint_x=0.3))
-        self.p2_input = TextInput(text=f"{self.default_w}, {self.default_h}", multiline=False, size_hint_x=0.7)
-        self.p2_input.bind(text=self._on_text_change)
-        self.p2_box.add_widget(self.p2_input)
-
-        # Skew inputs
-        self.tl_box = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
-        self.tl_box.add_widget(Label(text="TL (x, y):", size_hint_x=0.3))
-        self.tl_input = TextInput(text="0, 0", multiline=False, size_hint_x=0.7)
-        self.tl_input.bind(text=self._on_text_change)
-        self.tl_box.add_widget(self.tl_input)
-
-        self.tr_box = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
-        self.tr_box.add_widget(Label(text="TR (x, y):", size_hint_x=0.3))
-        self.tr_input = TextInput(text=f"{self.default_w}, 0", multiline=False, size_hint_x=0.7)
-        self.tr_input.bind(text=self._on_text_change)
-        self.tr_box.add_widget(self.tr_input)
-
-        self.bl_box = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
-        self.bl_box.add_widget(Label(text="BL (x, y):", size_hint_x=0.3))
-        self.bl_input = TextInput(text=f"0, {self.default_h}", multiline=False, size_hint_x=0.7)
-        self.bl_input.bind(text=self._on_text_change)
-        self.bl_box.add_widget(self.bl_input)
-
-        self.br_box = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
-        self.br_box.add_widget(Label(text="BR (x, y):", size_hint_x=0.3))
-        self.br_input = TextInput(text=f"{self.default_w}, {self.default_h}", multiline=False, size_hint_x=0.7)
-        self.br_input.bind(text=self._on_text_change)
-        self.br_box.add_widget(self.br_input)
+        w, h = self.default_w, self.default_h
+        self.p1_input = text_input(label="P1 (x, y):", default=f"0, 0", changed=self._on_text_change)
+        self.p2_input = text_input(label="P2 (x, y):", default=f"{w}, {h}", changed=self._on_text_change)
+        self.tl_input = text_input(label="TL (x, y):", default=f"0, 0", changed=self._on_text_change)
+        self.tr_input = text_input(label="TR (x, y):", default=f"{w}, 0", changed=self._on_text_change)
+        self.bl_input = text_input(label="BL (x, y):", default=f"0, {w}", changed=self._on_text_change)
+        self.br_input = text_input(label="BR (x, y):", default=f"{w}, {h}", changed=self._on_text_change)
 
         self.output_size_label = Label(text="Output size: 0, 0", size_hint_y=None, height=30)
         layout.add_widget(self.output_size_label)
@@ -127,14 +105,14 @@ class CroppingRegion:
         self._point_idx = 0
         self.points_container.clear_widgets()
         if self.is_rect:
-            self.points_container.add_widget(self.p1_box)
-            self.points_container.add_widget(self.p2_box)
+            self.points_container.add_widget(self.p1_input.parent)
+            self.points_container.add_widget(self.p2_input.parent)
             self.points_container.height = 60
         else:
-            self.points_container.add_widget(self.tl_box)
-            self.points_container.add_widget(self.tr_box)
-            self.points_container.add_widget(self.bl_box)
-            self.points_container.add_widget(self.br_box)
+            self.points_container.add_widget(self.tl_input.parent)
+            self.points_container.add_widget(self.tr_input.parent)
+            self.points_container.add_widget(self.bl_input.parent)
+            self.points_container.add_widget(self.br_input.parent)
             self.points_container.height = 120
         self._on_text_change()
 
