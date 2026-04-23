@@ -36,6 +36,7 @@ class CroppingRegion:
         self.on_change = on_change
         self.default_w = default_w
         self.default_h = default_h
+        self._point_idx = 0
 
     def build(self) -> BoxLayout:
         layout = BoxLayout(orientation='vertical', size_hint_y=None)
@@ -123,6 +124,7 @@ class CroppingRegion:
         return f"{point[0]}, {point[1]}"
 
     def on_method_change(self, *args):
+        self._point_idx = 0
         self.points_container.clear_widgets()
         if self.is_rect:
             self.points_container.add_widget(self.p1_box)
@@ -178,6 +180,15 @@ class CroppingRegion:
         self.bl_input.text = self._format_point(bl)
         self.br_input.text = self._format_point(br)
     
+    def push_point(self, x: int, y: int):
+        if self.is_rect:
+            inputs = [self.p1_input, self.p2_input]
+        else:
+            inputs = [self.tl_input, self.tr_input, self.br_input, self.bl_input]
+            
+        inputs[self._point_idx].text = self._format_point((x, y))
+        self._point_idx = (self._point_idx + 1) % len(inputs)
+
     def draw_outline(self, img: MatLike):
         if self.is_rect:
             p1, p2 = self.rect_points

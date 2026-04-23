@@ -97,6 +97,7 @@ class RecordingApp(App):
         layout = BoxLayout(orientation='horizontal')
 
         self.camera_view = Image(size_hint=(0.7, 1.0))
+        self.camera_view.bind(on_touch_down=self.on_camera_touch)
         layout.add_widget(self.camera_view)
 
         sidebar = BoxLayout(orientation='vertical', size_hint=(0.3, 1.0))
@@ -143,6 +144,29 @@ class RecordingApp(App):
             return None
 
         return frame
+
+    def on_camera_touch(self, instance, touch):
+        if not instance.collide_point(*touch.pos):
+            return False
+
+        if not self.frame_buffer or self.frame_buffer[0] is None:
+            return False
+
+        ix, iy = instance.norm_image_size
+        if ix == 0 or iy == 0:
+            return False
+
+        cx, cy = instance.center
+        bx, by = cx - ix / 2, cy - iy / 2
+        x, y = touch.pos
+
+        if bx <= x <= bx + ix and by <= y <= by + iy:
+            rel_x = (x - bx) / ix
+            rel_y = ((by + iy) - y) / iy
+            h, w = self.frame_buffer[0].shape[:2]
+            self.cropping_region.push_point(int(rel_x * w), int(rel_y * h))
+            return True
+        return False
 
     def update(self, dt):
         if not self.cap or not self.cap.isOpened():
