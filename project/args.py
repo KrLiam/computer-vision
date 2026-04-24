@@ -25,6 +25,18 @@ def parse_args():
         default=32,
         help="Batch size for training",
     )
+    train_parser.add_argument(
+        "--test-frequency",
+        type=float,
+        default=1.0,
+        help="Frequency of testing during training (Example: 0.5 for every 2 epochs, 1.0 for every epoch)",
+    )
+    train_parser.add_argument(
+        "--epochs",
+        type=int,
+        default=20,
+        help="Number of training epochs",
+    )
 
     # Crop subcommand
     crop_parser = subparsers.add_parser("crop", help="Crop dataset images")

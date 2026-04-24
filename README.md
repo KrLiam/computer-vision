@@ -13,7 +13,7 @@ Install PyTorch based on your compute platform.
 
 ```bash
 # cuda 13.0
-pip3 install torch torchvision
+pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
 # cuda 12.8
 pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 # cuda 12.6

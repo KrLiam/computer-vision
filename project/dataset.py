@@ -99,7 +99,7 @@ def build_dataset(
         
         images = [Image.open(path) for _, path in frames]
         x = frames_to_tensor(images) # Shape: (frames, height, width)
-        x = x.to(torch.float8_e4m3fn)
+        # x = x.to(torch.float8_e4m3fn)
         
         y = torch.zeros(num_notes, dtype=torch.float32)
         for note_str in notes:

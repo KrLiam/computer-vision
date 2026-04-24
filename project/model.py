@@ -122,7 +122,13 @@ def load_model(path: str, model: NeuralNetwork | None = None) -> NeuralNetwork:
     return model
 
 
-def run_training(train_dataset: str, test_dataset: str, batch_size: int = 32):
+def run_training(
+    train_dataset: str,
+    test_dataset: str,
+    batch_size: int = 32,
+    test_frequency: float = 1.0,
+    epochs: int = 20
+):
     # Dataset
     train_dataloader = load_dataset(train_dataset, batch_size=batch_size)
     test_dataloader = load_dataset(test_dataset, batch_size=batch_size)
@@ -143,11 +149,12 @@ def run_training(train_dataset: str, test_dataset: str, batch_size: int = 32):
 
     test(test_dataloader, model, loss_fn)
 
-    epochs = 20
+    test_i = max(1.0, round(1 / test_frequency))
     for t in range(epochs):
         print(f"Epoch {t+1}\n-------------------------------")
         train(train_dataloader, model, loss_fn, optimizer)
-        test(test_dataloader, model, loss_fn)
+        if test_i > 0 and (t + 1) % test_i == 0:
+            test(test_dataloader, model, loss_fn)
 
     print("Done!")
 
