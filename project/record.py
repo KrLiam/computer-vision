@@ -81,6 +81,7 @@ class RecordingApp(App):
         self.cap = None
         self.frame_buffer = deque(maxlen=3)
         self.pending_notes = []
+        self.output_subfolder = ""
 
         self.cap = video_capture(self.video_device)
         if not self.cap.isOpened():
