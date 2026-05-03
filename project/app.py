@@ -25,3 +25,6 @@ def run():
         case "vision":
             from project.vision import run_vision
             run_vision(args.model, args.camera)
+        case "area":
+            from project.area import debug_keyboard
+            debug_keyboard(args.input, args.threshold)

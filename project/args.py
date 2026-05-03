@@ -61,6 +61,20 @@ def parse_args():
         help="Path to the video input device (Example: /dev/video3)",
     )
 
+    # Area subcommand
+    area_parser = subparsers.add_parser("area", help="Keyboard are debugging.")
+    area_parser.add_argument(
+        "--input",
+        type=str,
+        help="Path for the image.",
+    )
+    area_parser.add_argument(
+        "--threshold",
+        type=int,
+        default=210,
+        help="Color threshold for the white key.",
+    )
+
     # Dataset subcommand
     dataset_parser = subparsers.add_parser("dataset", help="Dataset operations")
     dataset_subparsers = dataset_parser.add_subparsers(dest="dataset_command", help="Dataset commands")
