@@ -1,16 +1,17 @@
 from project.args import parse_args
-from project.dataset import build_dataset, dataset_info
-from project.model import run_training, run_test
 
 def run():
     args = parse_args()
 
     match args.command:
         case "train":
+            from project.model import run_training
             run_training(args.train_dataset, args.test_dataset, args.batch_size, args.test_frequency, args.epochs)
         case "test":
+            from project.model import run_test
             run_test()
         case "dataset":
+            from project.dataset import build_dataset, dataset_info
             match args.dataset_command:
                 case "build":
                     build_dataset(args.images, args.output)
