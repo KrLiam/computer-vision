@@ -2,3 +2,4 @@ mido[ports-rtmidi]
 opencv-python
 black
 kivy
+matplotlib

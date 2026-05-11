@@ -3,10 +3,16 @@
 
 ## Setup
 
-Initialize a virtual environment.
+Initialize a virtual environment (Linux).
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
+```
+
+Initialize a virtual environment (Windows).
+
+```bash
+python3 -m venv .venv && source .venv/Scripts/activate
 ```
 
 Install PyTorch based on your compute platform.
@@ -34,6 +40,13 @@ pip install -r requirements.txt
 python3 -m project
 ```
 
+```bash
+python -m project dataset record --midi-name "CASIO" --camera "0"
+```
+
+```bash
+python -m project area --input "frames\right_hand\1\1\C7_0.png"
+```
 -----
 
 ## Frames
