@@ -256,7 +256,7 @@ class CroppingApp(App):
         self.current_image_index = 0
         
         for pattern in self.patterns:
-            for path in glob.glob(pattern):
+            for path in glob.glob(pattern, recursive=True):
                 self.images.append(ImageEntry(path))
 
         if not self.images:

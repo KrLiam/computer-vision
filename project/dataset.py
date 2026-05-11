@@ -64,7 +64,7 @@ def build_dataset(
     samples = defaultdict(list)
 
     for pattern in patterns:
-        for path in glob.glob(pattern):
+        for path in glob.glob(pattern, recursive=True):
             basename = os.path.basename(path)
             name, _ = os.path.splitext(basename)
             parts = name.split('_')
