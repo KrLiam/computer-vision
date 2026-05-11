@@ -33,3 +33,13 @@ pip install -r requirements.txt
 ```bash
 python3 -m project
 ```
+
+-----
+
+## Frames
+
+Filename structure:
+
+
+{left_hand | right_hand}/{num_pressed_keys}/{fingers_index[list[1-5]]}/{Note}{Octave[1-5]}_{frame[0-3]}.png
+
