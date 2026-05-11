@@ -128,6 +128,7 @@ class RecordingApp(App):
         self.frame_buffer = deque(maxlen=3)
         self.pending_notes = []
         self.recording_enabled = False
+        self.replace_enabled = True
         self.saved_items = 0
         self.saved_history = []
         self.selected_hand = "right_hand"
@@ -185,6 +186,14 @@ class RecordingApp(App):
         )
         self.recording_button.bind(on_release=self._toggle_recording)
         sidebar.add_widget(self.recording_button)
+
+        self.replace_button = Button(
+            text="Replace: ON",
+            size_hint_y=None,
+            height=38,
+        )
+        self.replace_button.bind(on_release=self._toggle_replace)
+        sidebar.add_widget(self.replace_button)
 
         self.hand_dropdown = labelled_dropdown(
             "Hand:",
@@ -348,13 +357,14 @@ class RecordingApp(App):
                 )
                 saved_paths = []
                 for frame_idx, b_frame in enumerate(self.frame_buffer):
-                    filepath = (
+                    base_filepath = (
                         Path("frames")
                         / self.selected_hand
                         / str(pressed_keys)
                         / self.selected_fingers
                         / f"{notes_str}_{frame_idx}.png"
                     )
+                    filepath = self._resolve_save_path(base_filepath)
                     filepath.parent.mkdir(parents=True, exist_ok=True)
 
                     cropped = self._transform_frame(b_frame)
@@ -428,6 +438,22 @@ class RecordingApp(App):
         self.recording_button.text = f"Recording: {state}"
         if not self.recording_enabled:
             self.pending_notes.clear()
+
+    def _toggle_replace(self, *_):
+        self.replace_enabled = not self.replace_enabled
+        state = "ON" if self.replace_enabled else "OFF"
+        self.replace_button.text = f"Replace: {state}"
+
+    def _resolve_save_path(self, filepath: Path) -> Path:
+        if self.replace_enabled or not filepath.exists():
+            return filepath
+
+        suffix = 2
+        while True:
+            candidate = filepath.with_name(f"{filepath.stem}_{suffix}{filepath.suffix}")
+            if not candidate.exists():
+                return candidate
+            suffix += 1
 
     def _undo_last_save(self, *_):
         if not self.saved_history:
