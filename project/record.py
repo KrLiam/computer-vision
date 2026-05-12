@@ -15,15 +15,14 @@ from project.crop import CroppingRegion
 os.environ["KIVY_NO_ARGS"] = "1"
 from kivy.app import App
 from kivy.clock import Clock
-from kivy.graphics.texture import Texture
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.dropdown import DropDown
-from kivy.uix.image import Image
 from kivy.uix.checkbox import CheckBox
 from kivy.uix.label import Label
 
 from project.midi import format_note
+from project.image_view import ImageView
 
 
 LAST_SKEW_CONFIG_PATH = Path("frames") / "last_skew.json"
@@ -149,9 +148,8 @@ class RecordingApp(App):
 
         layout = BoxLayout(orientation='horizontal')
 
-        self.camera_view = Image(size_hint=(0.7, 1.0))
-        self.camera_view.bind(on_touch_down=self.on_camera_touch)
-        layout.add_widget(self.camera_view)
+        self.image_view = ImageView(size_hint=(0.7, 1.0))
+        layout.add_widget(self.image_view.build())
 
         sidebar = BoxLayout(orientation='vertical', size_hint=(0.3, 1.0))
 
@@ -160,7 +158,9 @@ class RecordingApp(App):
         if frame is not None:
             h, w, _ = frame.shape
         self.cropping_region = CroppingRegion(default_w=w, default_h=h)
+        self.image_view.on_touch = self.cropping_region.push_point
         sidebar.add_widget(self.cropping_region.build())
+
 
         self.load_skew_button = Button(
             text="Load last skew",
@@ -257,6 +257,7 @@ class RecordingApp(App):
         )
         self.captured_label.bind(size=self.captured_label.setter('text_size'))
         sidebar.add_widget(self.captured_label)
+
         layout.add_widget(sidebar)
 
         self.midi_listener.start()
@@ -275,29 +276,6 @@ class RecordingApp(App):
             return None
 
         return frame
-
-    def on_camera_touch(self, instance, touch):
-        if not instance.collide_point(*touch.pos):
-            return False
-
-        if not self.frame_buffer or self.frame_buffer[0] is None:
-            return False
-
-        ix, iy = instance.norm_image_size
-        if ix == 0 or iy == 0:
-            return False
-
-        cx, cy = instance.center
-        bx, by = cx - ix / 2, cy - iy / 2
-        x, y = touch.pos
-
-        if bx <= x <= bx + ix and by <= y <= by + iy:
-            rel_x = (x - bx) / ix
-            rel_y = ((by + iy) - y) / iy
-            h, w = self.frame_buffer[0].shape[:2]
-            self.cropping_region.push_point(int(rel_x * w), int(rel_y * h))
-            return True
-        return False
 
     def update(self, dt):
         if not self.cap or not self.cap.isOpened():
@@ -336,11 +314,7 @@ class RecordingApp(App):
         frame = frame.copy()
         frame = self._transform_frame(frame, outline=True)
 
-        # Convert BGR to RGB and flip vertically for Kivy Texture
-        buf = cv2.flip(frame, 0).tobytes()
-        texture = Texture.create(size=(frame.shape[1], frame.shape[0]), colorfmt='bgr')
-        texture.blit_buffer(buf, colorfmt='bgr', bufferfmt='ubyte')
-        self.camera_view.texture = texture
+        self.image_view.update_image(frame)
 
     def _process_frames(self):
         for idx, (c, notes) in reversed(list(enumerate(self.pending_notes))):

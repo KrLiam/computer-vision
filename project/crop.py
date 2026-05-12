@@ -11,15 +11,15 @@ from cv2.typing import MatLike
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.core.window import Window
-from kivy.graphics.texture import Texture
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.checkbox import CheckBox
-from kivy.uix.image import Image
 from kivy.uix.label import Label
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
 from kivy.uix.togglebutton import ToggleButton
+
+from project.image_view import ImageView
 
 
 @dataclass
@@ -270,8 +270,8 @@ class CroppingApp(App):
         layout = BoxLayout(orientation='horizontal')
 
         # Left: Frame Image
-        self.image_view = Image(size_hint=(0.7, 1.0))
-        layout.add_widget(self.image_view)
+        self.image_view = ImageView(size_hint=(0.7, 1.0))
+        layout.add_widget(self.image_view.build())
 
         # Right: Sidebar
         sidebar = BoxLayout(orientation='vertical', size_hint=(0.3, 1.0), padding=10)
@@ -282,6 +282,7 @@ class CroppingApp(App):
             h, w, _ = self.reference_image.shape
 
         self.cropping_region = CroppingRegion(on_change=self.update_preview, default_w=w, default_h=h)
+        self.image_view.on_touch = self.cropping_region.push_point
         sidebar.add_widget(self.cropping_region.build())
 
         # Flip Y Checkbox
@@ -370,16 +371,7 @@ class CroppingApp(App):
         self.show_image(img_copy)
 
     def show_image(self, img):
-        if img is None or img.size == 0:
-            return
-        if len(img.shape) == 2:
-            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-            
-        # Convert BGR to RGB (implied via rendering formats) and flip vertically for Kivy Texture rendering
-        buf = cv2.flip(img, 0).tobytes()
-        texture = Texture.create(size=(img.shape[1], img.shape[0]), colorfmt='bgr')
-        texture.blit_buffer(buf, colorfmt='bgr', bufferfmt='ubyte')
-        self.image_view.texture = texture
+        self.image_view.update_image(img)
 
     def apply_crop(self, *args):
         if self.is_cropping:

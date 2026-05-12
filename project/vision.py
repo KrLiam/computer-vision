@@ -14,11 +14,11 @@ from project.record import video_capture
 os.environ["KIVY_NO_ARGS"] = "1"
 from kivy.app import App
 from kivy.clock import Clock
-from kivy.graphics.texture import Texture
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.checkbox import CheckBox
-from kivy.uix.image import Image
 from kivy.uix.label import Label
+
+from project.image_view import ImageView
 
 class VisionApp(App):
     model: NeuralNetwork
@@ -46,8 +46,8 @@ class VisionApp(App):
     def build(self):
         layout = BoxLayout(orientation='horizontal')
 
-        self.camera_view = Image(size_hint=(0.7, 1.0))
-        layout.add_widget(self.camera_view)
+        self.image_view = ImageView(size_hint=(0.7, 1.0))
+        layout.add_widget(self.image_view.build())
 
         sidebar = BoxLayout(orientation='vertical', size_hint=(0.3, 1.0))
 
@@ -57,6 +57,7 @@ class VisionApp(App):
             h, w, _ = frame.shape
 
         self.cropping_region = CroppingRegion(default_w=w, default_h=h)
+        self.image_view.on_touch = self.cropping_region.push_point
         sidebar.add_widget(self.cropping_region.build())
 
         # Flip Y Checkbox
@@ -109,11 +110,7 @@ class VisionApp(App):
         if self.flip_x_cb.active:
             frame = cv2.flip(frame, 1)
 
-        # Convert BGR to RGB and flip vertically for Kivy Texture
-        buf = cv2.flip(frame, 0).tobytes()
-        texture = Texture.create(size=(frame.shape[1], frame.shape[0]), colorfmt='bgr')
-        texture.blit_buffer(buf, colorfmt='bgr', bufferfmt='ubyte')
-        self.camera_view.texture = texture
+        self.image_view.update_image(frame)
 
     def _update_sidebar(self):
         if not self.detected_notes:
@@ -160,4 +157,3 @@ def run_vision(model_path: str, camera: str):
     model = load_model(model_path)
 
     VisionApp(model, camera).run()
-
