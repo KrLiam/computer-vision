@@ -8,7 +8,7 @@ from project.crop import CroppingRegion
 from project.dataset import frames_to_tensor
 from project.midi import format_note, tensor_to_notes
 from project.model import DEVICE, NeuralNetwork, load_model
-from project.record import video_capture
+from project.record import labelled_checkbox, video_capture
 
 # Disable Kivy's argument parser to avoid conflicts with our own argparse
 os.environ["KIVY_NO_ARGS"] = "1"
@@ -60,13 +60,11 @@ class VisionApp(App):
         self.image_view.on_touch = self.cropping_region.push_point
         sidebar.add_widget(self.cropping_region.build())
 
-        # Flip Y Checkbox
-        flip_box = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
-        flip_box.add_widget(Label(text="Flip X:", size_hint_x=0.3))
-        self.flip_x_cb = CheckBox(active=False, size_hint_x=0.7)
-        flip_box.add_widget(self.flip_x_cb)
-        sidebar.add_widget(flip_box)
+        self.flip_x_cb = labelled_checkbox("Flip X:")
+        sidebar.add_widget(self.flip_x_cb.parent)
 
+        self.flip_y_cb = labelled_checkbox("Flip Y:")
+        sidebar.add_widget(self.flip_y_cb.parent)
 
         self.captured_label = Label(
             text="Captured: ",
@@ -107,9 +105,12 @@ class VisionApp(App):
         frame = frame.copy()
         self.cropping_region.draw_outline(frame)
 
+        if self.flip_y_cb.active:
+            frame = cv2.flip(frame, 0)
+
         if self.flip_x_cb.active:
             frame = cv2.flip(frame, 1)
-
+        
         self.image_view.update_image(frame)
 
     def _update_sidebar(self):

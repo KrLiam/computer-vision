@@ -2,14 +2,13 @@ import datetime
 import json
 import os
 from pathlib import Path
-import threading
 from collections import deque
 
 import cv2
 from cv2.typing import MatLike
 import mido
 
-from project.crop import CroppingRegion
+from project.crop import CroppingRegion, labelled_checkbox
 
 # Disable Kivy's argument parser to avoid conflicts with our own argparse
 os.environ["KIVY_NO_ARGS"] = "1"
@@ -21,40 +20,11 @@ from kivy.uix.dropdown import DropDown
 from kivy.uix.checkbox import CheckBox
 from kivy.uix.label import Label
 
-from project.midi import format_note
+from project.midi import MidiListener, format_note
 from project.image_view import ImageView
 
 
 LAST_SKEW_CONFIG_PATH = Path("frames") / "last_skew.json"
-
-
-class MidiListener:
-    def __init__(self, target_port: str):
-        self.target_port = target_port
-        self.midi_log = []
-        self._running = False
-        self._thread = None
-
-    def start(self):
-        self._running = True
-        self._thread = threading.Thread(target=self._midi_loop, daemon=True)
-        self._thread.start()
-        print(f"Listening for MIDI input on: {self.target_port}...")
-
-    def _midi_loop(self):
-        with mido.open_input(self.target_port) as inport:
-            for msg in inport:
-                if not self._running:
-                    break
-                self.midi_log.append(msg)
-
-    def get_messages(self):
-        messages = self.midi_log[:]
-        self.midi_log.clear()
-        return messages
-
-    def stop(self):
-        self._running = False
 
 
 def video_capture(device: str) -> cv2.VideoCapture:
@@ -69,14 +39,6 @@ def video_capture(device: str) -> cv2.VideoCapture:
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     
     return cap
-
-
-def labelled_checkbox(label: str, active: bool = False):
-    box = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
-    box.add_widget(Label(text=label, size_hint_x=0.3))
-    checkbox = CheckBox(active=active, size_hint_x=0.7)
-    box.add_widget(checkbox)
-    return checkbox
 
 
 def labelled_dropdown(

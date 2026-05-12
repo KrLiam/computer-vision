@@ -39,6 +39,13 @@ def text_input(label: str, changed = None, default: str = ""):
     box.add_widget(input)
     return input
 
+def labelled_checkbox(label: str, active: bool = False):
+    box = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
+    box.add_widget(Label(text=label, size_hint_x=0.3))
+    checkbox = CheckBox(active=active, size_hint_x=0.7)
+    box.add_widget(checkbox)
+    return checkbox
+
 
 class CroppingRegion:
     def __init__(self, on_change=None, default_w=0, default_h=0):
@@ -285,19 +292,17 @@ class CroppingApp(App):
         self.image_view.on_touch = self.cropping_region.push_point
         sidebar.add_widget(self.cropping_region.build())
 
-        # Flip Y Checkbox
-        flip_box = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
-        flip_box.add_widget(Label(text="Flip Y:", size_hint_x=0.3))
-        self.flip_y_cb = CheckBox(active=False, size_hint_x=0.7)
-        flip_box.add_widget(self.flip_y_cb)
-        sidebar.add_widget(flip_box)
+        # Flip X
+        self.flip_x_cb = labelled_checkbox("Flip X:")
+        sidebar.add_widget(self.flip_x_cb.parent)
+
+        # Flip Y
+        self.flip_y_cb = labelled_checkbox("Flip Y:")
+        sidebar.add_widget(self.flip_y_cb.parent)
 
         # Grayscale Checkbox
-        gray_box = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
-        gray_box.add_widget(Label(text="Grayscale:", size_hint_x=0.3))
-        self.gray_cb = CheckBox(active=False, size_hint_x=0.7)
-        gray_box.add_widget(self.gray_cb)
-        sidebar.add_widget(gray_box)
+        self.gray_cb = labelled_checkbox("Grayscale:")
+        sidebar.add_widget(self.gray_cb.parent)
 
         # Apply Button
         apply_box = BoxLayout(orientation='horizontal', size_hint_y=None, height=40)
@@ -402,7 +407,10 @@ class CroppingApp(App):
             cropped = self.cropping_region.apply(img)
 
             if self.flip_y_cb.active:
-                cropped = cv2.flip(cropped, 0)
+                frame = cv2.flip(frame, 0)
+
+            if self.flip_x_cb.active:
+                frame = cv2.flip(frame, 1)
                 
             if self.gray_cb.active:
                 cropped = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
