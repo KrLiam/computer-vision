@@ -48,10 +48,11 @@ def labelled_checkbox(label: str, active: bool = False):
 
 
 class CroppingRegion:
-    def __init__(self, on_change=None, default_w=0, default_h=0):
+    def __init__(self, on_change=None, default_w=0, default_h=0, desired_size=(640, 128)):
         self.on_change = on_change
         self.default_w = default_w
         self.default_h = default_h
+        self.desired_size = desired_size
         self._point_idx = 0
 
     def build(self) -> BoxLayout:
@@ -83,6 +84,10 @@ class CroppingRegion:
 
         self.output_size_label = Label(text="Output size: 0, 0", size_hint_y=None, height=30)
         layout.add_widget(self.output_size_label)
+
+        self.btn_adjust = Button(text="Adjust Size", size_hint_y=None, height=30)
+        self.btn_adjust.bind(on_press=self.on_adjust_size)
+        layout.add_widget(self.btn_adjust)
 
         self.on_method_change()
         return layout
@@ -173,6 +178,78 @@ class CroppingRegion:
             
         inputs[self._point_idx].text = self._format_point((x, y))
         self._point_idx = (self._point_idx + 1) % len(inputs)
+
+    def on_adjust_size(self, *args):
+        target_w, target_h = self.desired_size
+        out_w, out_h = self.output_size
+
+        if out_w == 0 or out_h == 0:
+            return
+
+        if self.is_rect:
+            p1, p2 = self.rect_points
+            if not p1 or not p2:
+                return
+            
+            x1, y1 = min(p1[0], p2[0]), min(p1[1], p2[1])
+            x2, y2 = max(p1[0], p2[0]), max(p1[1], p2[1])
+            
+            cx = (x1 + x2) / 2.0
+            cy = (y1 + y2) / 2.0
+            
+            new_x1 = cx - target_w / 2.0
+            new_x2 = cx + target_w / 2.0
+            new_y1 = cy - target_h / 2.0
+            new_y2 = cy + target_h / 2.0
+            
+            min_x, max_x = new_x1, new_x2
+            min_y, max_y = new_y1, new_y2
+            
+            dx = 0
+            if self.default_w > 0 and max_x > self.default_w: 
+                dx = self.default_w - max_x
+            if min_x + dx < 0: 
+                dx = -min_x
+                
+            dy = 0
+            if self.default_h > 0 and max_y > self.default_h: 
+                dy = self.default_h - max_y
+            if min_y + dy < 0: 
+                dy = -min_y
+            
+            self.rect_points = (int(new_x1 + dx), int(new_y1 + dy)), (int(new_x2 + dx), int(new_y2 + dy))
+            
+        else:
+            pts = self.skew_points
+            if any(p is None for p in pts):
+                return
+                
+            cx = sum(p[0] for p in pts) / 4.0
+            cy = sum(p[1] for p in pts) / 4.0
+            
+            sx = target_w / float(out_w)
+            sy = target_h / float(out_h)
+            
+            new_pts = []
+            for p in pts:
+                new_pts.append((cx + (p[0] - cx) * sx, cy + (p[1] - cy) * sy))
+                
+            min_x, max_x = min(p[0] for p in new_pts), max(p[0] for p in new_pts)
+            min_y, max_y = min(p[1] for p in new_pts), max(p[1] for p in new_pts)
+            
+            dx = 0
+            if self.default_w > 0 and max_x > self.default_w: 
+                dx = self.default_w - max_x
+            if min_x + dx < 0: 
+                dx = -min_x
+                
+            dy = 0
+            if self.default_h > 0 and max_y > self.default_h: 
+                dy = self.default_h - max_y
+            if min_y + dy < 0: 
+                dy = -min_y
+            
+            self.skew_points = tuple((int(p[0] + dx), int(p[1] + dy)) for p in new_pts)
 
     def draw_outline(self, img: MatLike):
         if self.is_rect:

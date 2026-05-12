@@ -1,4 +1,5 @@
 import os
+import datetime
 import torch
 from collections import deque
 import cv2
@@ -24,7 +25,9 @@ class VisionApp(App):
     model: NeuralNetwork
     cap: cv2.VideoCapture
     frame_buffer: deque[MatLike]
-    detected_notes: list[tuple]
+    detected_notes: list[str]
+    previous_notes: set[str]
+    log_lines: deque[str]
 
 
     def __init__(self, model: NeuralNetwork, video_device: str, **kwargs):
@@ -36,6 +39,8 @@ class VisionApp(App):
         self.cap = None
         self.frame_buffer = deque(maxlen=3)
         self.detected_notes = []
+        self.previous_notes = set()
+        self.log_lines = deque(maxlen=10)
 
         self.cap = video_capture(self.video_device)
         frame = self.get_frame()
@@ -66,14 +71,14 @@ class VisionApp(App):
         self.flip_y_cb = labelled_checkbox("Flip Y:")
         sidebar.add_widget(self.flip_y_cb.parent)
 
-        self.captured_label = Label(
-            text="Captured: ",
+        self.log_label = Label(
+            text="Action Log:\n",
             valign='top',
             halign='left',
             padding=(10, 10)
         )
-        self.captured_label.bind(size=self.captured_label.setter('text_size'))
-        sidebar.add_widget(self.captured_label)
+        self.log_label.bind(size=self.log_label.setter('text_size'))
+        sidebar.add_widget(self.log_label)
         layout.add_widget(sidebar)
 
         # Match Kivy refresh interval to 30 FPS.
@@ -114,13 +119,22 @@ class VisionApp(App):
         self.image_view.update_image(frame)
 
     def _update_sidebar(self):
-        if not self.detected_notes:
-            self.captured_label.text = "Captured: "
-            return
+        current_notes = set(self.detected_notes)
+        pressed = current_notes - self.previous_notes
+        released = self.previous_notes - current_notes
 
-        notes = ' + '.join(self.detected_notes)
-        txt = f"Captured: {notes}"
-        self.captured_label.text = txt
+        if pressed or released:
+            time_str = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-5]  # Truncates to 1 decimal place (e.g., 14:32:01.4)
+
+            if pressed:
+                notes_str = " + ".join(sorted(pressed))
+                self.log_lines.append(f"[{time_str}] Pressed {notes_str}")
+            if released:
+                notes_str = " + ".join(sorted(released))
+                self.log_lines.append(f"[{time_str}] Released {notes_str}")
+
+            self.previous_notes = current_notes
+            self.log_label.text = "Action Log:\n" + "\n".join(self.log_lines)
     
     def _test_model(self):
         if len(self.frame_buffer) < 3:
@@ -129,7 +143,10 @@ class VisionApp(App):
         frames = []
         for frame in self.frame_buffer:
             frame = self.cropping_region.apply(frame)
-            frames.append(frame)
+            if frame is not None:
+                frames.append(frame)
+        if not frames:
+            return
 
         x = frames_to_tensor(frames)
 

@@ -280,56 +280,58 @@ class RecordingApp(App):
 
     def _process_frames(self):
         for idx, (c, notes) in reversed(list(enumerate(self.pending_notes))):
-            if c == 0:
-                del self.pending_notes[idx]
-                if not self.recording_enabled:
+            if c > 0:
+                self.pending_notes[idx] = (c - 1, notes)
+                continue
+            
+            del self.pending_notes[idx]
+
+            if not self.recording_enabled:
+                continue
+
+            notes_str = "_".join(notes)
+            pressed_keys = (
+                len(notes)
+                if self.selected_pressed_keys == "auto"
+                else int(self.selected_pressed_keys)
+            )
+            saved_paths = []
+            for frame_idx, b_frame in enumerate(self.frame_buffer):
+                base_filepath = (
+                    Path("frames")
+                    / self.selected_hand
+                    / str(pressed_keys)
+                    / self.selected_fingers
+                    / f"{notes_str}_{frame_idx}.png"
+                )
+                filepath = self._resolve_save_path(base_filepath)
+                filepath.parent.mkdir(parents=True, exist_ok=True)
+
+                cropped = self._transform_frame(b_frame)
+                if cropped is None:
                     continue
 
-                notes_str = "_".join(notes)
-                pressed_keys = (
-                    len(notes)
-                    if self.selected_pressed_keys == "auto"
-                    else int(self.selected_pressed_keys)
-                )
-                saved_paths = []
-                for frame_idx, b_frame in enumerate(self.frame_buffer):
-                    base_filepath = (
-                        Path("frames")
-                        / self.selected_hand
-                        / str(pressed_keys)
-                        / self.selected_fingers
-                        / f"{notes_str}_{frame_idx}.png"
-                    )
-                    filepath = self._resolve_save_path(base_filepath)
-                    filepath.parent.mkdir(parents=True, exist_ok=True)
+                if cv2.imwrite(filepath, cropped):
+                    saved_paths.append(filepath)
+                    print(f"Saved frame {frame_idx} to {filepath}")
+                else:
+                    print(f"Could not save frame {frame_idx} to {filepath}")
 
-                    cropped = self._transform_frame(b_frame)
-                    if cropped is None:
-                        continue
+            if not saved_paths:
+                continue
 
-                    if cv2.imwrite(filepath, cropped):
-                        saved_paths.append(filepath)
-                        print(f"Saved frame {frame_idx} to {filepath}")
-                    else:
-                        print(f"Could not save frame {frame_idx} to {filepath}")
-                if saved_paths:
-                    self.saved_items += 1
-                    self.saved_history.append({
-                        "label": (
-                            f"{self.selected_hand}/{pressed_keys}/"
-                            f"{self.selected_fingers}/{notes_str}"
-                        ),
-                        "paths": saved_paths,
-                    })
-                    self._save_last_skew_if_changed()
-            else:
-                self.pending_notes[idx] = (c - 1, notes)
+            self.saved_items += 1
+            self.saved_history.append({
+                "label": (
+                    f"{self.selected_hand}/{pressed_keys}/"
+                    f"{self.selected_fingers}/{notes_str}"
+                ),
+                "paths": saved_paths,
+            })
+            self._save_last_skew_if_changed()
 
     def _process_midi(self):
         messages = self.midi_listener.get_messages()
-
-        if messages:
-            print(len(messages))
 
         current_time = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-4]
 
@@ -348,7 +350,7 @@ class RecordingApp(App):
                 c = 1
                 merge_tolerance = 1
 
-                if self.pending_notes and self.pending_notes[-1][0] - c <= merge_tolerance:
+                if self.pending_notes and c - self.pending_notes[-1][0] <= merge_tolerance:
                     self.pending_notes[-1][1].append(formatted_note)
                 else:
                     self.pending_notes.append((c, [formatted_note]))
