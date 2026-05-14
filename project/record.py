@@ -1,3 +1,4 @@
+from dataclasses import dataclass, field
 import datetime
 import json
 import os
@@ -20,7 +21,7 @@ from kivy.uix.dropdown import DropDown
 from kivy.uix.checkbox import CheckBox
 from kivy.uix.label import Label
 
-from project.midi import MidiListener, format_note
+from project.midi import MidiListener, Note, format_note
 from project.image_view import ImageView
 
 
@@ -80,13 +81,23 @@ def finger_index_options() -> list[str]:
     return options
 
 
+@dataclass(frozen=True, kw_only=True)
+class Frame:
+    data: MatLike
+    time: datetime.datetime
+    notes: set[Note] = field(default_factory=set)
+
 class RecordingApp(App):
+    frame_buffer: deque[Frame]
+
     def __init__(self, target_port: str, video_device: str, **kwargs):
         super().__init__(**kwargs)
         self.video_device = video_device
         self.midi_listener = MidiListener(target_port)
         self.cap = None
-        self.frame_buffer = deque(maxlen=3)
+        self.frame_n = 0
+        self.frame_buffer = deque(maxlen=30)
+        self.scheduled_save = None
         self.pending_notes = []
         self.recording_enabled = False
         self.replace_enabled = True
@@ -101,9 +112,7 @@ class RecordingApp(App):
             print(f"Camera device '{self.video_device}' is invalid.")
             exit()
 
-        frame = self.get_frame()
-        if frame is not None:
-            self.frame_buffer.append(frame)
+        self.update_frame()
 
     def build(self):
         os.makedirs("frames", exist_ok=True)
@@ -116,7 +125,7 @@ class RecordingApp(App):
         sidebar = BoxLayout(orientation='vertical', size_hint=(0.3, 1.0))
 
         w, h = 0, 0
-        frame = self.frame_buffer[0]
+        frame = self.frame_buffer[0].data
         if frame is not None:
             h, w, _ = frame.shape
         self.cropping_region = CroppingRegion(default_w=w, default_h=h)
@@ -225,32 +234,57 @@ class RecordingApp(App):
         self.midi_listener.start()
 
         # Match Kivy refresh interval to 30 FPS.
-        Clock.schedule_interval(self.update, 1.0 / 30.0)
+        Clock.schedule_interval(self.update, 1.0 / 100.0)
 
         return layout
 
-    def get_frame(self) -> MatLike | None:
+    def update_frame(self) -> Frame | None:
         if not self.cap or not self.cap.isOpened():
             return None
 
         ret, frame = self.cap.read()
         if not ret:
             return None
+
+        now = datetime.datetime.now()
+        frame = Frame(data=frame, time=now)
+        self.frame_buffer.appendleft(frame)
+        self.frame_n += 1
+
+        # Remove frames older than 1 second
+        while self.frame_buffer and (now - self.frame_buffer[-1].time).total_seconds() > 1.0:
+            self.frame_buffer.pop()
 
         return frame
 
     def update(self, dt):
         if not self.cap or not self.cap.isOpened():
             return
+        
+        t = 1
 
-        ret, frame = self.cap.read()
-        if not ret:
+        frame = self.update_frame()
+        if not frame:
             return
+        
+        self.midi_listener.update()
+        frame.notes.update(self.midi_listener.pressed(t))
 
-        self.frame_buffer.append(frame)
-        self._update_camera_view(frame)
-        self._process_frames()
-        self._process_midi()
+        time = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-5]
+        print(f"{time} Frame {self.frame_n} ({len(self.frame_buffer)} fps), just pressed: {self.midi_listener.just_pressed()}, just released: {self.midi_listener.just_released()}")
+
+        if self.scheduled_save is not None:
+            self.scheduled_save += 1
+            if self.scheduled_save >= 0:
+                self.scheduled_save = None
+                self.save_frame(0, prefix="pressed")
+        
+        if self.midi_listener.just_pressed(t):
+            self.save_frame(0)
+            self.save_frame(7)
+            self.save_frame(-3)
+
+        self._update_camera_view(frame.data)
         self._update_sidebar()
 
     def _transform_frame(self, frame, outline: bool = False):
@@ -278,84 +312,60 @@ class RecordingApp(App):
 
         self.image_view.update_image(frame)
 
-    def _process_frames(self):
-        for idx, (c, notes) in reversed(list(enumerate(self.pending_notes))):
-            if c > 0:
-                self.pending_notes[idx] = (c - 1, notes)
-                continue
-            
-            del self.pending_notes[idx]
+    def save_frame(self, index: int, prefix: str | None = None):
+        if not self.recording_enabled:
+            return
+        
+        if index < 0:
+            self.scheduled_save = index
+            return
 
-            if not self.recording_enabled:
-                continue
+        frame = self.frame_buffer[index]
 
-            notes_str = "_".join(notes)
-            pressed_keys = (
-                len(notes)
-                if self.selected_pressed_keys == "auto"
-                else int(self.selected_pressed_keys)
-            )
-            saved_paths = []
-            for frame_idx, b_frame in enumerate(self.frame_buffer):
-                base_filepath = (
-                    Path("frames")
-                    / self.selected_hand
-                    / str(pressed_keys)
-                    / self.selected_fingers
-                    / f"{notes_str}_{frame_idx}.png"
-                )
-                filepath = self._resolve_save_path(base_filepath)
-                filepath.parent.mkdir(parents=True, exist_ok=True)
+        notes = sorted(note.name for note in frame.notes)
+        notes_str = "_".join(notes) if notes else "none"
+        pressed_keys = (
+            len(notes)
+            if self.selected_pressed_keys == "auto"
+            else int(self.selected_pressed_keys)
+        )
+        saved_paths = []
+        for i in range(0, 3):
+            frame_idx = index + 2 - i
+            b_frame = self.frame_buffer[frame_idx].data
 
-                cropped = self._transform_frame(b_frame)
-                if cropped is None:
-                    continue
+            path = Path("frames") / self.selected_hand / str(pressed_keys) / self.selected_fingers
 
-                if cv2.imwrite(filepath, cropped):
-                    saved_paths.append(filepath)
-                    print(f"Saved frame {frame_idx} to {filepath}")
-                else:
-                    print(f"Could not save frame {frame_idx} to {filepath}")
-
-            if not saved_paths:
-                continue
-
-            self.saved_items += 1
-            self.saved_history.append({
-                "label": (
-                    f"{self.selected_hand}/{pressed_keys}/"
-                    f"{self.selected_fingers}/{notes_str}"
-                ),
-                "paths": saved_paths,
-            })
-            self._save_last_skew_if_changed()
-
-    def _process_midi(self):
-        messages = self.midi_listener.get_messages()
-
-        current_time = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-4]
-
-        for msg in messages:
-            if not hasattr(msg, "note"):
-                continue
-
-            pressed = msg.type == "note_on"
-            note = msg.note
-            formatted_note = format_note(note)
-
-            if pressed:
-                if not self.recording_enabled:
-                    continue
-
-                c = 1
-                merge_tolerance = 1
-
-                if self.pending_notes and c - self.pending_notes[-1][0] <= merge_tolerance:
-                    self.pending_notes[-1][1].append(formatted_note)
-                else:
-                    self.pending_notes.append((c, [formatted_note]))
+            if prefix:
+                path /= f"{prefix}_{notes_str}_{i}.png"
             else:
-                print(f"[{current_time}] Released note {formatted_note}")
+                path /= f"{notes_str}_{i}.png"
+            
+            path = self._resolve_save_path(path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+
+            cropped = self._transform_frame(b_frame)
+            if cropped is None:
+                continue
+
+            if cv2.imwrite(path, cropped):
+                saved_paths.append(path)
+                print(f"Saved frame {frame_idx} to {path}")
+            else:
+                print(f"Could not save frame {frame_idx} to {path}")
+
+        if not saved_paths:
+            return
+
+        self.saved_items += 1
+        self.saved_history.append({
+            "label": (
+                f"{self.selected_hand}/{pressed_keys}/"
+                f"{self.selected_fingers}/{notes_str}"
+            ),
+            "paths": saved_paths,
+        })
+        self._save_last_skew_if_changed()
 
     def _update_sidebar(self):
         self.saved_counter_label.text = f"Saved images: {self.saved_items}"
@@ -383,15 +393,12 @@ class RecordingApp(App):
         self.replace_button.text = f"Replace: {state}"
 
     def _resolve_save_path(self, filepath: Path) -> Path:
-        if self.replace_enabled or not filepath.exists():
-            return filepath
-
-        suffix = 2
+        prefix = 0
         while True:
-            candidate = filepath.with_name(f"{filepath.stem}_{suffix}{filepath.suffix}")
+            candidate = filepath.with_name(f"{prefix}__{filepath.stem}{filepath.suffix}")
             if not candidate.exists():
                 return candidate
-            suffix += 1
+            prefix += 1
 
     def _undo_last_save(self, *_):
         if not self.saved_history:

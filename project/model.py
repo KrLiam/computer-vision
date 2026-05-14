@@ -109,6 +109,8 @@ def test(dataloader, model, loss_fn):
     correct /= size
     print(f"Test:\n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f}, Pred Range: [{min_pred:>0.4f}, {max_pred:>0.4f}]\n")
 
+    return correct
+
 
 def save_model(model: NeuralNetwork, path: str):
     torch.save(model.state_dict(), path)
@@ -118,7 +120,7 @@ def save_model(model: NeuralNetwork, path: str):
 def load_model(path: str, model: NeuralNetwork | None = None) -> NeuralNetwork:
     if model is None:
         model = NeuralNetwork().to(DEVICE)
-    model.load_state_dict(torch.load(path, weights_only=True))
+    model.load_state_dict(torch.load(path, weights_only=True, map_location=torch.device(DEVICE)))
     return model
 
 
@@ -127,7 +129,9 @@ def run_training(
     test_dataset: str,
     batch_size: int = 32,
     test_frequency: float = 1.0,
-    epochs: int = 20
+    epochs: int = 20,
+    model_path: str = MODEL_PATH,
+    target_accuracy: float = 1.0,
 ):
     # Dataset
     train_dataloader = load_dataset(train_dataset, batch_size=batch_size)
@@ -137,8 +141,8 @@ def run_training(
     # Initialize model
     model = NeuralNetwork().to(DEVICE)
     try:
-        load_model(MODEL_PATH, model)
-        print(f"Model '{MODEL_PATH}' loaded successfully!")
+        load_model(model_path, model)
+        print(f"Model '{model_path}' loaded successfully!")
     except FileNotFoundError:
         ...
 
@@ -147,18 +151,24 @@ def run_training(
     loss_fn = nn.BCEWithLogitsLoss() # Multi-class
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-    test(test_dataloader, model, loss_fn)
+    accuracy = test(test_dataloader, model, loss_fn)
+    if accuracy >= target_accuracy:
+        print(f"Model already reached target accuracy ({target_accuracy*100:>.1f}%), exiting.")
+        return
 
     test_i = max(1.0, round(1 / test_frequency))
     for t in range(epochs):
         print(f"Epoch {t+1}\n-------------------------------")
         train(train_dataloader, model, loss_fn, optimizer)
         if test_i > 0 and (t + 1) % test_i == 0:
-            test(test_dataloader, model, loss_fn)
+            accuracy = test(test_dataloader, model, loss_fn)
+            if accuracy >= target_accuracy:
+                print(f"Model reached target accuracy ({target_accuracy*100:>.1f}%), stopping training.")
+                return
 
     print("Done!")
 
-    save_model(model, MODEL_PATH)
+    save_model(model, model_path)
 
 
 def run_test():

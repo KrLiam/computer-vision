@@ -32,10 +32,22 @@ def parse_args():
         help="Frequency of testing during training (Example: 0.5 for every 2 epochs, 1.0 for every epoch)",
     )
     train_parser.add_argument(
+        "--target-accuracy",
+        type=float,
+        default=1.0,
+        help="Immediately stops training when tested accuracy reaches this value.",
+    )
+    train_parser.add_argument(
         "--epochs",
         type=int,
         default=20,
         help="Number of training epochs",
+    )
+    train_parser.add_argument(
+        "--model",
+        type=str,
+        default="model.pth",
+        help="Path to load/save the '.pth' model file",
     )
 
     # Crop subcommand

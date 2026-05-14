@@ -3,11 +3,12 @@ import datetime
 import torch
 from collections import deque
 import cv2
+import numpy as np
 from cv2.typing import MatLike
 
 from project.crop import CroppingRegion
 from project.dataset import frames_to_tensor
-from project.midi import format_note, tensor_to_notes
+from project.midi import format_note, get_note_code, guess_key_positions, tensor_to_notes
 from project.model import DEVICE, NeuralNetwork, load_model
 from project.record import labelled_checkbox, video_capture
 
@@ -72,7 +73,7 @@ class VisionApp(App):
         sidebar.add_widget(self.flip_y_cb.parent)
 
         self.log_label = Label(
-            text="Action Log:\n",
+            text="Pressed:\nAction Log:\n",
             valign='top',
             halign='left',
             padding=(10, 10)
@@ -99,7 +100,7 @@ class VisionApp(App):
     def update(self, dt):
         frame = self.get_frame()
         if frame is None:
-            return   
+            return
 
         self.frame_buffer.append(frame)
         self._update_camera_view(frame)
@@ -108,13 +109,31 @@ class VisionApp(App):
 
     def _update_camera_view(self, frame):
         frame = frame.copy()
-        self.cropping_region.draw_outline(frame)
 
         if self.flip_y_cb.active:
             frame = cv2.flip(frame, 0)
 
         if self.flip_x_cb.active:
             frame = cv2.flip(frame, 1)
+
+        out_w, out_h = self.cropping_region.output_size
+        if out_w > 0 and out_h > 0 and self.detected_notes:
+            mask = np.zeros((out_h, out_w, 3), dtype=np.uint8)
+            key_positions = guess_key_positions((out_w, out_h))
+            
+            for note_str in self.detected_notes:
+                code = get_note_code(note_str)
+                if code in key_positions:
+                    x, y, w, h = key_positions[code]
+                    cv2.rectangle(mask, (x, y), (x + w, y + h), (0, 0, 255), -1)
+                    
+            warped_mask = self.cropping_region.inverse_apply(mask, frame.shape)
+            if warped_mask is not None:
+                alpha = 0.75
+                active = warped_mask > 0
+                frame[active] = (frame[active] * (1 - alpha) + warped_mask[active] * alpha).astype(np.uint8)
+
+        self.cropping_region.draw_outline(frame)
         
         self.image_view.update_image(frame)
 
@@ -134,7 +153,10 @@ class VisionApp(App):
                 self.log_lines.append(f"[{time_str}] Released {notes_str}")
 
             self.previous_notes = current_notes
-            self.log_label.text = "Action Log:\n" + "\n".join(self.log_lines)
+            self.log_label.text = (
+                f"Pressed: {', '.join(sorted(pressed))}\n" +
+                "Action Log:\n" + '\n'.join(self.log_lines)
+            )
     
     def _test_model(self):
         if len(self.frame_buffer) < 3:

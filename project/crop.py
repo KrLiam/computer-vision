@@ -224,18 +224,50 @@ class CroppingRegion:
             if any(p is None for p in pts):
                 return
                 
-            cx = sum(p[0] for p in pts) / 4.0
-            cy = sum(p[1] for p in pts) / 4.0
+            pts = np.array(pts, dtype=np.float32)
             
-            sx = target_w / float(out_w)
-            sy = target_h / float(out_h)
-            
-            new_pts = []
-            for p in pts:
-                new_pts.append((cx + (p[0] - cx) * sx, cy + (p[1] - cy) * sy))
+            # Calculate local scale factors using the quadrilateral's axes to handle
+            # any orientation (including vertical). Applied iteratively to guarantee
+            # exact convergence for non-parallelogram shapes.
+            for _ in range(10):
+                width_top = np.linalg.norm(pts[0] - pts[1])
+                width_bot = np.linalg.norm(pts[3] - pts[2])
+                current_w = max(width_top, width_bot)
                 
-            min_x, max_x = min(p[0] for p in new_pts), max(p[0] for p in new_pts)
-            min_y, max_y = min(p[1] for p in new_pts), max(p[1] for p in new_pts)
+                height_left = np.linalg.norm(pts[0] - pts[2])
+                height_right = np.linalg.norm(pts[1] - pts[3])
+                current_h = max(height_left, height_right)
+                
+                if current_w < 1e-3 or current_h < 1e-3:
+                    break
+                    
+                if abs(current_w - target_w) == 0 and abs(current_h - target_h) == 0:
+                    break
+                
+                sx = target_w / float(current_w)
+                sy = target_h / float(current_h)
+                
+                tl, tr, bl, br = pts
+                C = (tl + tr + bl + br) / 4.0
+                
+                # W points roughly left to right, H points top to bottom
+                W = (tr + br - tl - bl) / 4.0
+                H = (bl + br - tl - tr) / 4.0
+                
+                # Transformation matrix to scale along local W and H axes
+                M = np.column_stack((W, H))
+                if abs(np.linalg.det(M)) < 1e-6:
+                    break
+                    
+                inv_M = np.linalg.inv(M)
+                S = np.array([[sx, 0], [0, sy]])
+                A = M @ S @ inv_M
+                
+                for i in range(4):
+                    pts[i] = C + A @ (pts[i] - C)
+                    
+            min_x, max_x = np.min(pts[:, 0]), np.max(pts[:, 0])
+            min_y, max_y = np.min(pts[:, 1]), np.max(pts[:, 1])
             
             dx = 0
             if self.default_w > 0 and max_x > self.default_w: 
@@ -249,7 +281,7 @@ class CroppingRegion:
             if min_y + dy < 0: 
                 dy = -min_y
             
-            self.skew_points = tuple((int(p[0] + dx), int(p[1] + dy)) for p in new_pts)
+            self.skew_points = tuple((int(round(p[0] + dx)), int(round(p[1] + dy))) for p in pts)
 
     def draw_outline(self, img: MatLike):
         if self.is_rect:
@@ -327,6 +359,50 @@ class CroppingRegion:
             
             M = cv2.getPerspectiveTransform(src_pts, dst_pts)
             return cv2.warpPerspective(img, M, (out_w, out_h))
+
+    def inverse_apply(self, img: MatLike, target_shape: tuple[int, int]) -> MatLike | None:
+        target_h, target_w = target_shape[:2]
+        
+        if self.is_rect:
+            p1, p2 = self.rect_points
+
+            if not p1 or not p2:
+                return None
+
+            x1, y1 = min(p1[0], p2[0]), min(p1[1], p2[1])
+            x2, y2 = max(p1[0], p2[0]), max(p1[1], p2[1])
+
+            cx1, cy1 = max(0, x1), max(0, y1)
+            cx2, cy2 = min(target_w, x2), min(target_h, y2)
+            mh, mw = cy2 - cy1, cx2 - cx1
+
+            if mh <= 0 or mw <= 0:
+                return None
+            
+            img_resized = cv2.resize(img, (mw, mh))
+            res = np.zeros((target_h, target_w, *img.shape[2:]), dtype=img.dtype)
+            res[cy1:cy2, cx1:cx2] = img_resized
+            return res
+        else:
+            tl, tr, bl, br = self.skew_points
+
+            if not tl or not tr or not bl or not br:
+                return None
+
+            crop_pts = [tl, tr, br, bl]
+            dst_pts = np.array(crop_pts, dtype=np.float32)
+            
+            out_w, out_h = self.output_size
+            
+            src_pts = np.array([
+                [0, 0],
+                [out_w - 1, 0],
+                [out_w - 1, out_h - 1],
+                [0, out_h - 1]
+            ], dtype=np.float32)
+            
+            M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+            return cv2.warpPerspective(img, M, (target_w, target_h))
 
 
 class CroppingApp(App):

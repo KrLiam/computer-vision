@@ -6,7 +6,15 @@ def run():
     match args.command:
         case "train":
             from project.model import run_training
-            run_training(args.train_dataset, args.test_dataset, args.batch_size, args.test_frequency, args.epochs)
+            run_training(
+                args.train_dataset,
+                args.test_dataset,
+                args.batch_size,
+                args.test_frequency,
+                args.epochs,
+                model_path=args.model,
+                target_accuracy=args.target_accuracy,
+            )
         case "test":
             from project.model import run_test
             run_test()
