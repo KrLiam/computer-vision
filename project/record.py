@@ -20,6 +20,10 @@ from project.model import run_training
 
 # Disable Kivy's argument parser to avoid conflicts with our own argparse
 os.environ["KIVY_NO_ARGS"] = "1"
+from kivy.config import Config
+Config.set('graphics', 'width', '1280')
+Config.set('graphics', 'height', '720')
+
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.uix.boxlayout import BoxLayout
@@ -235,9 +239,9 @@ class DatasetMenu(BoxLayout):
         return self.frames_input.text.split()
 
 
-class CreateDatasetPopup(Popup):
+class TrainingPopup(Popup):
     def __init__(self, on_log=None, **kwargs):
-        super().__init__(title="Create Dataset", size_hint=(0.8, 0.9), **kwargs)
+        super().__init__(title="Training", size_hint=(0.8, 0.9), **kwargs)
         layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
         
         self.train_ds_menu = DatasetMenu("Train Dataset", "datasets/train_0.pt")
@@ -330,15 +334,17 @@ class Frame:
     time: datetime.datetime
     notes: set[Note] = field(default_factory=set)
 
-class RecordingApp(App):
+class RecordingContainer(BoxLayout):
     frame_buffer: deque[Frame]
-    popup: CreateDatasetPopup | None
+    popup: TrainingPopup | None
 
-    def __init__(self, target_port: str, video_device: str, **kwargs):
-        super().__init__(**kwargs)
-        self.video_device = video_device
-        self.midi_listener = MidiListener(target_port)
-        self.cap = None
+    def __init__(self, target_port: str | None, initial_frame: MatLike | None, **kwargs):
+        super().__init__(orientation='vertical', padding=(5, 10), **kwargs)
+        if target_port:
+            self.midi_listener = MidiListener(target_port)
+            self.midi_listener.start()
+        else:
+            self.midi_listener = None
         self.frame_n = 0
         self.frame_buffer = deque(maxlen=30)
         self.scheduled_save = None
@@ -354,26 +360,12 @@ class RecordingApp(App):
         self.train_epoch = "0"
         self.train_accuracy = "--.-%"
 
-        self.cap = video_capture(self.video_device)
-        if not self.cap.isOpened():
-            print(f"Camera device '{self.video_device}' is invalid.")
-            exit()
+        self.build(initial_frame)
+        if initial_frame is not None:
+            self._update_camera_view(initial_frame)
 
-        self.update_frame()
-
-    def build(self):
+    def build(self, initial_frame: MatLike | None):
         os.makedirs("frames", exist_ok=True)
-
-        root_layout = BoxLayout(orientation='vertical')
-        
-        topbar = BoxLayout(orientation='horizontal', size_hint_y=None, height=40)
-        train_button = Button(text="Train", size_hint_x=None, width=100)
-        train_button.bind(on_release=self._open_train_popup)
-        self.train_log_label = Label(text="", halign="left", valign="middle", padding=(5, 0))
-        self.train_log_label.bind(size=self.train_log_label.setter('text_size'))
-        topbar.add_widget(train_button)
-        topbar.add_widget(self.train_log_label)
-        root_layout.add_widget(topbar)
 
         layout = BoxLayout(orientation='horizontal')
 
@@ -383,9 +375,8 @@ class RecordingApp(App):
         sidebar = BoxLayout(orientation='vertical', size_hint=(0.3, 1.0))
 
         w, h = 0, 0
-        frame = self.frame_buffer[0].data
-        if frame is not None:
-            h, w, _ = frame.shape
+        if initial_frame is not None:
+            h, w, _ = initial_frame.shape
         self.cropping_region = CroppingRegion(default_w=w, default_h=h)
         self.image_view.on_touch = self.cropping_region.push_point
         sidebar.add_widget(self.cropping_region.build())
@@ -489,51 +480,36 @@ class RecordingApp(App):
 
         layout.add_widget(sidebar)
 
-        self.midi_listener.start()
+        self.add_widget(layout)
 
-        # Match Kivy refresh interval to 30 FPS.
-        Clock.schedule_interval(self.update, 1.0 / 100.0)
+        bottombar = BoxLayout(orientation='horizontal', size_hint_y=None, height=40)
+        train_button = Button(text="Train", size_hint_x=None, width=100)
+        train_button.bind(on_release=self._open_train_popup)
+        self.train_log_label = Label(text="", halign="left", valign="middle", padding=(5, 0))
+        self.train_log_label.bind(size=self.train_log_label.setter('text_size'))
+        bottombar.add_widget(train_button)
+        bottombar.add_widget(self.train_log_label)
+        self.add_widget(bottombar)
 
-        root_layout.add_widget(layout)
-
-        return root_layout
 
     def _open_train_popup(self, *_):
         if self.popup is None:
-            self.popup = CreateDatasetPopup(on_log=self._update_train_log)
+            self.popup = TrainingPopup(on_log=self._update_train_log)
         self.popup.open()
 
-    def update_frame(self) -> Frame | None:
-        if not self.cap or not self.cap.isOpened():
-            return None
-
-        ret, frame = self.cap.read()
-        if not ret:
-            return None
-
+    def update(self, dt, frame_data: MatLike):
         now = datetime.datetime.now()
-        frame = Frame(data=frame, time=now)
+        frame = Frame(data=frame_data, time=now)
         self.frame_buffer.appendleft(frame)
         self.frame_n += 1
 
-        # Remove frames older than 1 second
         while self.frame_buffer and (now - self.frame_buffer[-1].time).total_seconds() > 1.0:
             self.frame_buffer.pop()
-
-        return frame
-
-    def update(self, dt):
-        if not self.cap or not self.cap.isOpened():
-            return
         
         t = 1
-
-        frame = self.update_frame()
-        if not frame:
-            return
-        
-        self.midi_listener.update()
-        frame.notes.update(self.midi_listener.pressed(t))
+        if self.midi_listener:
+            self.midi_listener.update()
+            frame.notes.update(self.midi_listener.pressed(t))
 
         time = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-5]
         # print(f"{time} Frame {self.frame_n} ({len(self.frame_buffer)} fps), just pressed: {self.midi_listener.just_pressed()}, just released: {self.midi_listener.just_released()}")
@@ -544,7 +520,7 @@ class RecordingApp(App):
                 self.scheduled_save = None
                 self.save_frame(0, prefix="pressed")
         
-        if self.midi_listener.just_pressed(t):
+        if self.midi_listener and self.midi_listener.just_pressed(t):
             self.save_frame(0)
             self.save_frame(7)
             self.save_frame(-3)
@@ -787,10 +763,80 @@ class RecordingApp(App):
         self.selected_fingers = value
         
     def on_stop(self):
+        if self.midi_listener:
+            self.midi_listener.stop()
+
+
+class UnifiedApp(App):
+    def __init__(self, target_port: str | None, video_device: str, model_path: str | None = None, initial_mode: str = "Recording", **kwargs):
+        super().__init__(title=initial_mode, **kwargs)
+        self.target_port = target_port
+        self.video_device = video_device
+        self.model_path = model_path
+        self.initial_mode = initial_mode
+        self.cap = video_capture(self.video_device)
+        
+        if not self.cap.isOpened():
+            print(f"Camera device '{self.video_device}' is invalid.")
+            sys.exit(1)
+            
+        ret, frame = self.cap.read()
+        self.initial_frame = frame if ret else None
+
+    def build(self):
+        root = BoxLayout(orientation='vertical')
+        
+        toggle_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=40)
+        self.btn_record = ToggleButton(text="Recording", group="mode", state="down" if self.initial_mode == "Recording" else "normal")
+        self.btn_test = ToggleButton(text="Testing", group="mode", state="down" if self.initial_mode == "Testing" else "normal")
+        self.btn_record.bind(on_press=self.on_mode_change)
+        self.btn_test.bind(on_press=self.on_mode_change)
+        toggle_layout.add_widget(self.btn_record)
+        toggle_layout.add_widget(self.btn_test)
+        root.add_widget(toggle_layout)
+        
+        self.content_layout = BoxLayout(orientation='vertical')
+        root.add_widget(self.content_layout)
+        
+        from project.vision import VisionContainer
+        self.recording_container = RecordingContainer(self.target_port, self.initial_frame)
+        self.vision_container = VisionContainer(self.model_path, self.initial_frame)
+        
+        self.on_mode_change()
+        
+        Clock.schedule_interval(self.update, 1.0 / 100.0)
+        return root
+
+    def on_mode_change(self, *args):
+        if self.btn_record.state == 'normal' and self.btn_test.state == 'normal':
+            if args and args[0] == self.btn_record:
+                self.btn_record.state = 'down'
+            else:
+                self.btn_test.state = 'down'
+
+        self.content_layout.clear_widgets()
+        if self.btn_record.state == 'down':
+            self.content_layout.add_widget(self.recording_container)
+        else:
+            self.content_layout.add_widget(self.vision_container)
+
+    def update(self, dt):
+        if not self.cap or not self.cap.isOpened():
+            return
+        ret, frame = self.cap.read()
+        if not ret:
+            return
+            
+        if self.btn_record.state == 'down':
+            self.recording_container.update(dt, frame)
+        else:
+            self.vision_container.update(dt, frame)
+
+    def on_stop(self):
         if self.cap:
             self.cap.release()
-        self.midi_listener.stop()
-        print("\nStopped listening to MIDI input.")
+        self.recording_container.on_stop()
+        self.vision_container.on_stop()
 
 
 def run_recording(midi_name: str, video_device: str):
@@ -803,4 +849,4 @@ def run_recording(midi_name: str, video_device: str):
         print(f"Available ports: {s}")
         return
 
-    RecordingApp(target_port, video_device).run()
+    UnifiedApp(target_port, video_device, initial_mode="Recording").run()

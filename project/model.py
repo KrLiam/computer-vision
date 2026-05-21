@@ -81,6 +81,8 @@ def test(dataloader, model, loss_fn):
     Tests the model against the test dataset.
     """
 
+    print("Testing model...")
+
     size = len(dataloader.dataset)
     num_batches = len(dataloader)
     model.eval()
@@ -108,7 +110,7 @@ def test(dataloader, model, loss_fn):
             correct += ((pred_prob > 0.5) == (y > 0.5)).all(dim=1).type(torch.float).sum().item()
     test_loss /= num_batches
     correct /= size
-    print(f"Test:\n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f}, Pred Range: [{min_pred:>0.4f}, {max_pred:>0.4f}]\n")
+    print(f"Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f}, Pred Range: [{min_pred:>0.4f}, {max_pred:>0.4f}]\n")
 
     return correct
 

@@ -7,6 +7,10 @@ import numpy as np
 
 # Disable Kivy's argument parser to avoid conflicts with our own argparse
 os.environ["KIVY_NO_ARGS"] = "1"
+from kivy.config import Config
+Config.set('graphics', 'width', '1280')
+Config.set('graphics', 'height', '720')
+
 from cv2.typing import MatLike
 from kivy.app import App
 from kivy.clock import Clock
