@@ -51,6 +51,18 @@ python -m project area --input "frames\right_hand\1\1\C7_0.png"
 ```
 -----
 
+## Train
+
+python -m project dataset record --midi-name "CASIO" --camera "0"
+
+python -m project dataset build --images "frames/**/*.png" --output teste.pt
+
+python -m project train --train-dataset teste.pt --test-dataset teste.pt
+
+python -m project crop --path frames/**/*.png
+
+ python -m project vision --model model.pth --camera "0"
+
 ## Frames
 
 Filename structure:
