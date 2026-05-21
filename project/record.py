@@ -179,7 +179,7 @@ class DatasetMenu(BoxLayout):
 
     def update_existing_datasets(self):
         os.makedirs("datasets", exist_ok=True)
-        self.datasets = [f for f in os.listdir("datasets") if f.endswith(".pt")]
+        self.datasets = [f for f in os.listdir("datasets") if f.endswith(".pt") or f.endswith(".tar")]
 
         default_existing = self.datasets[0] if self.datasets else ""
         self.existing_path_val = default_existing
@@ -244,10 +244,10 @@ class TrainingPopup(Popup):
         super().__init__(title="Training", size_hint=(0.8, 0.9), **kwargs)
         layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
         
-        self.train_ds_menu = DatasetMenu("Train Dataset", "datasets/train_0.pt")
+        self.train_ds_menu = DatasetMenu("Train Dataset", "datasets/train_0.tar")
         layout.add_widget(self.train_ds_menu)
         
-        self.test_ds_menu = DatasetMenu("Test Dataset", "datasets/test_0.pt")
+        self.test_ds_menu = DatasetMenu("Test Dataset", "datasets/test_0.tar")
         layout.add_widget(self.test_ds_menu)
         
         layout.add_widget(Label(text="Model", size_hint_y=None, height=30, bold=True))

@@ -10,14 +10,14 @@ def parse_args():
     train_parser.add_argument(
         "--train-dataset",
         type=str,
-        default="dataset.pt",
-        help="Path to the training dataset '.pt' file",
+        default="dataset.tar",
+        help="Path to the training dataset '.tar' or '.pt' file",
     )
     train_parser.add_argument(
         "--test-dataset",
         type=str,
-        default="dataset.pt",
-        help="Path to the test dataset '.pt' file",
+        default="dataset.tar",
+        help="Path to the test dataset '.tar' or '.pt' file",
     )
     train_parser.add_argument(
         "--batch-size",
@@ -116,16 +116,16 @@ def parse_args():
     dataset_build_parser.add_argument(
         "--output",
         type=str,
-        default="dataset.pt",
-        help="Output dataset path, a '.pt' file",
+        default="dataset.tar",
+        help="Output dataset path, a '.tar' file",
     )
 
     dataset_info_parser = dataset_subparsers.add_parser("info", help="Get dataset information")
     dataset_info_parser.add_argument(
         "--path",
         type=str,
-        default="dataset.pt",
-        help="Path to the dataset '.pt' file",
+        default="dataset.tar",
+        help="Path to the dataset '.tar' or '.pt' file",
     )
 
     # Test command
