@@ -35,7 +35,8 @@ def text_input(label: str, changed = None, default: str = ""):
     box = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
     box.add_widget(Label(text=label, size_hint_x=0.3))
     input = TextInput(text=default, multiline=False, size_hint_x=0.7)
-    input.bind(text=changed)
+    if changed is not None:
+        input.bind(text=changed)
     box.add_widget(input)
     return input
 

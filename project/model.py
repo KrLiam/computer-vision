@@ -1,3 +1,4 @@
+from pathlib import Path
 import random
 
 import torch
@@ -113,6 +114,7 @@ def test(dataloader, model, loss_fn):
 
 
 def save_model(model: NeuralNetwork, path: str):
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     torch.save(model.state_dict(), path)
     print(f"Saved PyTorch Model State to {path}")
 

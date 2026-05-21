@@ -2,14 +2,20 @@ from dataclasses import dataclass, field
 import datetime
 import json
 import os
+import subprocess
+import sys
+import logging
 from pathlib import Path
+import threading
 from collections import deque
 
 import cv2
 from cv2.typing import MatLike
 import mido
 
-from project.crop import CroppingRegion, labelled_checkbox
+from project.crop import CroppingRegion, labelled_checkbox, text_input
+from project.dataset import build_dataset
+from project.model import run_training
 
 # Disable Kivy's argument parser to avoid conflicts with our own argparse
 os.environ["KIVY_NO_ARGS"] = "1"
@@ -20,10 +26,14 @@ from kivy.uix.button import Button
 from kivy.uix.dropdown import DropDown
 from kivy.uix.checkbox import CheckBox
 from kivy.uix.label import Label
+from kivy.uix.popup import Popup
+from kivy.uix.textinput import TextInput
+from kivy.uix.togglebutton import ToggleButton
 
-from project.midi import MidiListener, Note, format_note
+from project.midi import MidiListener, Note
 from project.image_view import ImageView
 
+logging.getLogger('PIL').setLevel(logging.WARNING)
 
 LAST_SKEW_CONFIG_PATH = Path("frames") / "last_skew.json"
 
@@ -40,7 +50,6 @@ def video_capture(device: str) -> cv2.VideoCapture:
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     
     return cap
-
 
 def labelled_dropdown(
     label: str,
@@ -81,6 +90,148 @@ def finger_index_options() -> list[str]:
     return options
 
 
+class DatasetMenu(BoxLayout):
+    def __init__(self, title: str, default_new_path: str, **kwargs):
+        super().__init__(orientation='vertical', size_hint_y=None, height=140, **kwargs)
+        self.add_widget(Label(text=title, size_hint_y=None, height=30, bold=True))
+
+        self.toggle_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
+        self.btn_new = ToggleButton(text="New", group=f"ds_{title}", state="down")
+        self.btn_existing = ToggleButton(text="Existing", group=f"ds_{title}")
+        self.btn_new.bind(on_press=self.on_mode_change)
+        self.btn_existing.bind(on_press=self.on_mode_change)
+        self.toggle_layout.add_widget(self.btn_new)
+        self.toggle_layout.add_widget(self.btn_existing)
+        self.add_widget(self.toggle_layout)
+
+        self.content_layout = BoxLayout(orientation='vertical', size_hint_y=None, height=80)
+        self.add_widget(self.content_layout)
+
+        self.frames_input = text_input("Frames:", default="frames/**/*.png")
+        self.output_dataset_input = text_input("Dataset:", default=default_new_path)
+        
+        os.makedirs("datasets", exist_ok=True)
+        datasets = [f for f in os.listdir("datasets") if f.endswith(".pt")]
+        default_existing = datasets[0] if datasets else ""
+        self.existing_path_val = default_existing
+        self.existing_dropdown = labelled_dropdown(
+            "Path:", datasets, default_existing, self._on_existing_change
+        )
+
+        self.on_mode_change()
+
+    def _on_existing_change(self, val):
+        self.existing_path_val = val
+
+    def on_mode_change(self, *args):
+        self.content_layout.clear_widgets()
+        if self.is_new:
+            self.content_layout.add_widget(self.frames_input.parent)
+            self.content_layout.add_widget(self.output_dataset_input.parent)
+        else:
+            self.content_layout.add_widget(self.existing_dropdown.parent)
+            self.content_layout.add_widget(Label(size_hint_y=None, height=36)) # filler
+
+    @property
+    def is_new(self):
+        return self.btn_new.state == 'down'
+
+    def get_path(self):
+        if self.is_new:
+            return self.output_dataset_input.text
+        else:
+            return os.path.join("datasets", self.existing_path_val)
+
+    def get_patterns(self):
+        return self.frames_input.text.split()
+
+
+class CreateDatasetPopup(Popup):
+    def __init__(self, on_log=None, **kwargs):
+        super().__init__(title="Create Dataset", size_hint=(0.8, 0.9), **kwargs)
+        layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
+        
+        self.train_ds_menu = DatasetMenu("Train Dataset", "datasets/train_0.pt")
+        layout.add_widget(self.train_ds_menu)
+        
+        self.test_ds_menu = DatasetMenu("Test Dataset", "datasets/test_0.pt")
+        layout.add_widget(self.test_ds_menu)
+        
+        self.epochs_input = text_input("Epochs:", default="20")
+        layout.add_widget(self.epochs_input.parent)
+        
+        self.output_model_input = text_input("Model:", default="models/0.pth")
+        layout.add_widget(self.output_model_input.parent)
+        
+        action_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=40)
+        self.train_btn = Button(text="Train", size_hint_x=None, width=100)
+        self.train_btn.bind(on_release=self._on_train)
+        action_layout.add_widget(self.train_btn)
+        
+        self.log_label = Label(text="", halign="left", valign="middle", padding=(10, 0))
+        self.log_label.bind(size=self.log_label.setter('text_size'))
+        action_layout.add_widget(self.log_label)
+
+        self.on_log = on_log
+        
+        layout.add_widget(action_layout)
+        self.content = layout
+
+    def _on_train(self, instance):
+        train_path = self.train_ds_menu.get_path()
+        test_path = self.test_ds_menu.get_path()
+        out_model = self.output_model_input.text
+        
+        try:
+            epochs = int(self.epochs_input.text)
+        except ValueError:
+            epochs = 20
+        
+        self.train_btn.disabled = True
+        
+        code = (
+            "from project.dataset import build_dataset\n"
+            "from project.model import run_training\n"
+        )
+        
+        if self.train_ds_menu.is_new:
+            patterns = self.train_ds_menu.get_patterns()
+            code += f"build_dataset({patterns!r}, output_path={train_path!r})\n"
+            
+        if self.test_ds_menu.is_new:
+            if not self.train_ds_menu.is_new or train_path != test_path:
+                patterns = self.test_ds_menu.get_patterns()
+                code += f"build_dataset({patterns!r}, output_path={test_path!r})\n"
+                
+        code += f"run_training(train_dataset={train_path!r}, test_dataset={test_path!r}, model_path={out_model!r}, epochs={epochs})\n"
+        
+        process = subprocess.Popen(
+            [sys.executable, "-u", "-c", code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        
+        def read_output(p):
+            for line in iter(p.stdout.readline, ''):
+                if line:
+                    Clock.schedule_once(lambda dt, l=line.strip(): self._update_log(l))
+            p.stdout.close()
+            p.wait()
+            Clock.schedule_once(lambda dt: self._update_log("Finished!"))
+            Clock.schedule_once(lambda dt: setattr(self.train_btn, 'disabled', False))
+
+        threading.Thread(target=read_output, args=(process,), daemon=True).start()
+
+        self.dismiss()
+
+    def _update_log(self, text):
+        self.log_label.text = text
+        if self.on_log:
+            self.on_log(text)
+
+
 @dataclass(frozen=True, kw_only=True)
 class Frame:
     data: MatLike
@@ -89,6 +240,7 @@ class Frame:
 
 class RecordingApp(App):
     frame_buffer: deque[Frame]
+    popup: CreateDatasetPopup | None
 
     def __init__(self, target_port: str, video_device: str, **kwargs):
         super().__init__(**kwargs)
@@ -106,6 +258,7 @@ class RecordingApp(App):
         self.selected_hand = "right_hand"
         self.selected_pressed_keys = "auto"
         self.selected_fingers = "1"
+        self.popup = None
 
         self.cap = video_capture(self.video_device)
         if not self.cap.isOpened():
@@ -116,6 +269,17 @@ class RecordingApp(App):
 
     def build(self):
         os.makedirs("frames", exist_ok=True)
+
+        root_layout = BoxLayout(orientation='vertical')
+        
+        topbar = BoxLayout(orientation='horizontal', size_hint_y=None, height=40)
+        train_button = Button(text="Train", size_hint_x=None, width=100)
+        train_button.bind(on_release=self._open_train_popup)
+        self.train_log_label = Label(text="", halign="left", valign="middle", padding=(5, 0))
+        self.train_log_label.bind(size=self.train_log_label.setter('text_size'))
+        topbar.add_widget(train_button)
+        topbar.add_widget(self.train_log_label)
+        root_layout.add_widget(topbar)
 
         layout = BoxLayout(orientation='horizontal')
 
@@ -236,7 +400,14 @@ class RecordingApp(App):
         # Match Kivy refresh interval to 30 FPS.
         Clock.schedule_interval(self.update, 1.0 / 100.0)
 
-        return layout
+        root_layout.add_widget(layout)
+
+        return root_layout
+
+    def _open_train_popup(self, *_):
+        if self.popup is None:
+            self.popup = CreateDatasetPopup(on_log=self._update_train_log)
+        self.popup.open()
 
     def update_frame(self) -> Frame | None:
         if not self.cap or not self.cap.isOpened():
@@ -271,7 +442,7 @@ class RecordingApp(App):
         frame.notes.update(self.midi_listener.pressed(t))
 
         time = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-5]
-        print(f"{time} Frame {self.frame_n} ({len(self.frame_buffer)} fps), just pressed: {self.midi_listener.just_pressed()}, just released: {self.midi_listener.just_released()}")
+        # print(f"{time} Frame {self.frame_n} ({len(self.frame_buffer)} fps), just pressed: {self.midi_listener.just_pressed()}, just released: {self.midi_listener.just_released()}")
 
         if self.scheduled_save is not None:
             self.scheduled_save += 1
@@ -305,6 +476,8 @@ class RecordingApp(App):
 
         return frame
 
+    def _update_train_log(self, t: str):
+        self.train_log_label.text = t
 
     def _update_camera_view(self, frame):
         frame = frame.copy()

@@ -1,6 +1,7 @@
 import glob
 import os
 from collections import defaultdict
+from pathlib import Path
 from typing import Iterable
 
 from cv2.typing import MatLike
@@ -120,6 +121,7 @@ def build_dataset(
     print(f"Dataset built, X={x_shape}, Y={y_shape}")
 
     data = { 'x': torch.stack(x_tensors), 'y': torch.stack(y_tensors) }
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     torch.save(data, output_path)
     print(f"Dataset saved to {output_path}")
 
