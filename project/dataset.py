@@ -52,16 +52,7 @@ def frames_to_tensor(
 
     return torch.stack(converted)
 
-
-def build_dataset(
-    patterns: list[str],
-    output_path: str = "dataset.pt",
-    first_note: int = 36, # C2
-    num_notes: int = 61,
-):
-    print("Building dataset")
-
-    # map note tuples to a list of (frame, path)
+def get_dataset_samples(patterns: list[str]) -> dict[str, list[tuple[int, str]]]:
     samples = defaultdict(list)
 
     for pattern in patterns:
@@ -82,6 +73,23 @@ def build_dataset(
                 continue
                 
             samples[key].append((frame_idx, path))
+
+    for key in list(samples.keys()):
+        frames = samples[key]
+        if len(frames) != 3:
+            del samples[key]
+            
+    return samples
+
+def build_dataset(
+    patterns: list[str],
+    output_path: str = "dataset.pt",
+    first_note: int = 36, # C2
+    num_notes: int = 61,
+):
+    print("Building dataset")
+
+    samples = get_dataset_samples(patterns)
     
     print(f"Found {len(samples)} samples")
                 
@@ -91,10 +99,6 @@ def build_dataset(
     for key, frames in samples.items():
         name = os.path.basename(key)
         notes = tuple(sorted(name.split('_')))
-
-        if len(frames) != 3:
-            print(f"{notes} has {len(frames)} frames, skipping")
-            continue
             
         frames.sort(key=lambda x: x[0])
         
@@ -149,4 +153,3 @@ def dataset_info(path: str, first_note: int = 36):
     for i in range(y_tensors.shape[1]):
         note_code = i + first_note
         print(f"{format_note(note_code)}: {distribution[note_code]}")
-

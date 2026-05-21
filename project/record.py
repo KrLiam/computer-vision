@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import re
 import logging
 from pathlib import Path
 import threading
@@ -27,6 +28,7 @@ from kivy.uix.dropdown import DropDown
 from kivy.uix.checkbox import CheckBox
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
+from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
 from kivy.uix.togglebutton import ToggleButton
 
@@ -90,54 +92,141 @@ def finger_index_options() -> list[str]:
     return options
 
 
+class DetailsPopup(Popup):
+    def __init__(self, samples: dict[str, list], **kwargs):
+        super().__init__(title="Sample Details", size_hint=(0.6, 0.8), **kwargs)
+        
+        from collections import defaultdict
+        from project.midi import get_note_code
+        
+        note_counts = defaultdict(int)
+        valid_samples = 0
+        for key, frames in samples.items():
+            if len(frames) != 3:
+                continue
+            valid_samples += 1
+            name = os.path.basename(key)
+            notes = name.split('_')
+            notes = [note for note in notes if get_note_code(note) is not None]
+            if len(notes) == 0:
+                note_counts["None"] += 1
+            for note in notes:
+                note_counts[note] += 1
+        
+        sorted_counts = sorted(note_counts.items(), key=lambda k: -k[1])
+        
+        lines = [
+            f"Total valid samples: {valid_samples}\n",
+            "Samples per note:\n"
+        ]
+
+        for note, count in sorted_counts:
+            lines.append(f"{note}: {count}")
+            
+        text = "\n".join(lines)
+        
+        layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
+        sv = ScrollView(size_hint=(1, 1))
+        
+        label = Label(text=text, size_hint_y=None, halign='left', valign='top')
+        label.bind(size=label.setter('text_size'))
+        label.bind(texture_size=lambda instance, size: setattr(instance, 'height', size[1]))
+        sv.add_widget(label)
+        layout.add_widget(sv)
+        
+        close_btn = Button(text="Close", size_hint_y=None, height=40)
+        close_btn.bind(on_release=self.dismiss)
+        layout.add_widget(close_btn)
+        
+        self.content = layout
+
+
 class DatasetMenu(BoxLayout):
     def __init__(self, title: str, default_new_path: str, **kwargs):
-        super().__init__(orientation='vertical', size_hint_y=None, height=140, **kwargs)
+        super().__init__(orientation='vertical', size_hint_y=None, height=150, **kwargs)
         self.add_widget(Label(text=title, size_hint_y=None, height=30, bold=True))
 
         self.toggle_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
-        self.btn_new = ToggleButton(text="New", group=f"ds_{title}", state="down")
+        self.btn_create = ToggleButton(text="Create", group=f"ds_{title}", state="down")
         self.btn_existing = ToggleButton(text="Existing", group=f"ds_{title}")
-        self.btn_new.bind(on_press=self.on_mode_change)
+        self.btn_create.bind(on_press=self.on_mode_change)
         self.btn_existing.bind(on_press=self.on_mode_change)
-        self.toggle_layout.add_widget(self.btn_new)
+        self.toggle_layout.add_widget(self.btn_create)
         self.toggle_layout.add_widget(self.btn_existing)
         self.add_widget(self.toggle_layout)
 
-        self.content_layout = BoxLayout(orientation='vertical', size_hint_y=None, height=80)
+        self.content_layout = BoxLayout(orientation='vertical', size_hint_y=None, height=90)
         self.add_widget(self.content_layout)
 
-        self.frames_input = text_input("Frames:", default="frames/**/*.png")
+        self.frames_input = text_input("Frames:", changed=self._on_frames_change, default="frames/**/*.png")
         self.output_dataset_input = text_input("Dataset:", default=default_new_path)
         
-        os.makedirs("datasets", exist_ok=True)
-        datasets = [f for f in os.listdir("datasets") if f.endswith(".pt")]
-        default_existing = datasets[0] if datasets else ""
-        self.existing_path_val = default_existing
-        self.existing_dropdown = labelled_dropdown(
-            "Path:", datasets, default_existing, self._on_existing_change
-        )
+        self.info_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
+        self.samples_label = Label(text="Samples: 0", size_hint_x=0.7, halign="left", valign="middle")
+        self.samples_label.bind(size=self.samples_label.setter('text_size'))
+        self.details_btn = Button(text="Details", size_hint_x=0.3)
+        self.details_btn.bind(on_release=self._open_details)
+        self.info_layout.add_widget(self.samples_label)
+        self.info_layout.add_widget(self.details_btn)
+        
+        self.update_existing_datasets()
 
         self.on_mode_change()
+
+    def update_existing_datasets(self):
+        os.makedirs("datasets", exist_ok=True)
+        self.datasets = [f for f in os.listdir("datasets") if f.endswith(".pt")]
+
+        default_existing = self.datasets[0] if self.datasets else ""
+        self.existing_path_val = default_existing
+
+        self.existing_dropdown = labelled_dropdown(
+            "Path:", self.datasets, default_existing, self._on_existing_change
+        )
 
     def _on_existing_change(self, val):
         self.existing_path_val = val
 
     def on_mode_change(self, *args):
         self.content_layout.clear_widgets()
-        if self.is_new:
+
+        self.update_existing_datasets()
+
+        if self.is_create:
             self.content_layout.add_widget(self.frames_input.parent)
             self.content_layout.add_widget(self.output_dataset_input.parent)
+            self.content_layout.add_widget(self.info_layout)
+            self.content_layout.height = 90
+            self.height = 150
+            self._update_samples()
         else:
             self.content_layout.add_widget(self.existing_dropdown.parent)
             self.content_layout.add_widget(Label(size_hint_y=None, height=36)) # filler
+            self.content_layout.height = 72
+            self.height = 132
 
     @property
-    def is_new(self):
-        return self.btn_new.state == 'down'
+    def is_create(self):
+        return self.btn_create.state == 'down'
+
+    def _on_frames_change(self, instance, value):
+        Clock.unschedule(self._update_samples)
+        Clock.schedule_once(self._update_samples, 0.5)
+
+    def _update_samples(self, dt=0):
+        from project.dataset import get_dataset_samples
+        patterns = self.frames_input.text.split()
+        self.samples = get_dataset_samples(patterns)
+        self.samples_label.text = f"Samples: {len(self.samples)}"
+        
+    def _open_details(self, instance):
+        if not hasattr(self, 'samples'):
+            return
+        popup = DetailsPopup(self.samples)
+        popup.open()
 
     def get_path(self):
-        if self.is_new:
+        if self.is_create:
             return self.output_dataset_input.text
         else:
             return os.path.join("datasets", self.existing_path_val)
@@ -157,6 +246,8 @@ class CreateDatasetPopup(Popup):
         self.test_ds_menu = DatasetMenu("Test Dataset", "datasets/test_0.pt")
         layout.add_widget(self.test_ds_menu)
         
+        layout.add_widget(Label(text="Model", size_hint_y=None, height=30, bold=True))
+
         self.epochs_input = text_input("Epochs:", default="20")
         layout.add_widget(self.epochs_input.parent)
         
@@ -175,6 +266,7 @@ class CreateDatasetPopup(Popup):
         self.on_log = on_log
         
         layout.add_widget(action_layout)
+        layout.add_widget(Label())  # filler to push items to the top
         self.content = layout
 
     def _on_train(self, instance):
@@ -194,12 +286,12 @@ class CreateDatasetPopup(Popup):
             "from project.model import run_training\n"
         )
         
-        if self.train_ds_menu.is_new:
+        if self.train_ds_menu.is_create:
             patterns = self.train_ds_menu.get_patterns()
             code += f"build_dataset({patterns!r}, output_path={train_path!r})\n"
             
-        if self.test_ds_menu.is_new:
-            if not self.train_ds_menu.is_new or train_path != test_path:
+        if self.test_ds_menu.is_create:
+            if not self.train_ds_menu.is_create or train_path != test_path:
                 patterns = self.test_ds_menu.get_patterns()
                 code += f"build_dataset({patterns!r}, output_path={test_path!r})\n"
                 
@@ -259,6 +351,8 @@ class RecordingApp(App):
         self.selected_pressed_keys = "auto"
         self.selected_fingers = "1"
         self.popup = None
+        self.train_epoch = "0"
+        self.train_accuracy = "--.-%"
 
         self.cap = video_capture(self.video_device)
         if not self.cap.isOpened():
@@ -477,7 +571,22 @@ class RecordingApp(App):
         return frame
 
     def _update_train_log(self, t: str):
-        self.train_log_label.text = t
+        epoch_match = re.search(r"^Epoch\s+(\d+)", t)
+        if epoch_match:
+            self.train_epoch = epoch_match.group(1)
+            
+        acc_match = re.search(r"Accuracy:\s*([\d\.]+%)", t)
+        if acc_match:
+            self.train_accuracy = acc_match.group(1)
+
+        total_epochs = "?"
+        if self.popup:
+            try:
+                total_epochs = str(int(self.popup.epochs_input.text))
+            except ValueError:
+                total_epochs = "20"
+                
+        self.train_log_label.text = f"{self.train_epoch}/{total_epochs} | {self.train_accuracy} | {t}"
 
     def _update_camera_view(self, frame):
         frame = frame.copy()
