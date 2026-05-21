@@ -1,3 +1,6 @@
+import glob
+from pathlib import Path
+
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
@@ -5,13 +8,15 @@ from cv2.typing import MatLike
 from time import perf_counter
 
 
-def show(*rows: tuple[MatLike, str] | tuple[tuple[MatLike, str], ...]):
+def show(
+    *rows: tuple[MatLike, str] | tuple[tuple[MatLike, str], ...],
+    save_path: str = ""
+):
     """
     Displays images in a grid. Each argument is a row.
     A row can be a single (image, title) tuple or a tuple of (image, title) tuples.
     """
-    figsize = 2
-
+    figsize = 5
     processed_rows = []
     for row in rows:
         if isinstance(row[0], (np.ndarray, MatLike)):
@@ -39,7 +44,11 @@ def show(*rows: tuple[MatLike, str] | tuple[tuple[MatLike, str], ...]):
             axes[r, c].axis('off')
 
     plt.tight_layout()
-    plt.show()
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(save_path)
+    else:
+        plt.show()
 
 
 def apply_sobel(image: MatLike) -> MatLike:
@@ -63,7 +72,10 @@ class PerfCounter:
         delta = (perf_counter() - self.time) * 1000
         print(f"{self.label}: {delta:.3f}ms")
 
-def identify_keyboard_adaptive_threshold(image: MatLike) -> MatLike:
+def identify_keyboard_adaptive_threshold(
+    image: MatLike,
+    save_path: str,
+) -> MatLike:
     with PerfCounter("Identification time"):
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         gray = cv2.fastNlMeansDenoising(gray, None, 5, 3, 9)
@@ -153,11 +165,18 @@ def identify_keyboard_adaptive_threshold(image: MatLike) -> MatLike:
             (keyboard_mask_3, "Keyboard Mask (Opened)"),
             (final_mask, "Final Keyboard Mask"),
             (gray_keyboard, "Cropped Keyboard"),
-        )
+        ),
+        save_path=save_path,
     )
 
     return gray_keyboard
 
 def debug_keyboard(input: str, threshold: int):
-    img = cv2.imread(input, cv2.IMREAD_COLOR_RGB)
-    result = identify_keyboard_adaptive_threshold(img)
+    for path in glob.glob(input, recursive=True):
+        img = cv2.imread(path, cv2.IMREAD_COLOR_RGB)
+        output = Path("ignored_detection") / Path(path)
+        # print(str(output))
+        result = identify_keyboard_adaptive_threshold(
+            img,
+            save_path=str(output),
+        )
