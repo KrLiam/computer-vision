@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 import datetime
 import json
 import os
+import random
 import subprocess
 import sys
 import re
@@ -11,6 +12,7 @@ import threading
 from collections import deque
 
 import cv2
+import numpy as np
 from cv2.typing import MatLike
 import mido
 
@@ -33,6 +35,7 @@ from kivy.uix.checkbox import CheckBox
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
+from kivy.uix.slider import Slider
 from kivy.uix.textinput import TextInput
 from kivy.uix.togglebutton import ToggleButton
 
@@ -42,6 +45,7 @@ from project.image_view import ImageView
 logging.getLogger('PIL').setLevel(logging.WARNING)
 
 LAST_SKEW_CONFIG_PATH = Path("frames") / "last_skew.json"
+NONE_SAVE_PROBABILITY = 0.15
 
 
 def video_capture(device: str) -> cv2.VideoCapture:
@@ -86,6 +90,26 @@ def labelled_dropdown(
     dropdown.bind(on_select=on_select)
     box.add_widget(button)
     return button
+
+
+def labelled_slider(
+    label: str,
+    minimum: float,
+    maximum: float,
+    default: float,
+    step: float,
+    value_format: str = "{:.0f}",
+):
+    box = BoxLayout(orientation='horizontal', size_hint_y=None, height=36)
+    box.add_widget(Label(text=label, size_hint_x=0.32))
+
+    slider = Slider(min=minimum, max=maximum, value=default, step=step, size_hint_x=0.5)
+    value_label = Label(text=value_format.format(default), size_hint_x=0.18)
+    slider.bind(value=lambda _, value: setattr(value_label, "text", value_format.format(value)))
+
+    box.add_widget(slider)
+    box.add_widget(value_label)
+    return slider
 
 
 def finger_index_options() -> list[str]:
@@ -147,7 +171,10 @@ class DetailsPopup(Popup):
 
 class DatasetMenu(BoxLayout):
     def __init__(self, title: str, default_new_path: str, **kwargs):
-        super().__init__(orientation='vertical', size_hint_y=None, height=150, **kwargs)
+        super().__init__(orientation='vertical', size_hint_y=None, height=210, **kwargs)
+        self.on_change = None
+        self.size_error_count = 0
+        self.image_count = 0
         self.add_widget(Label(text=title, size_hint_y=None, height=30, bold=True))
 
         self.toggle_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
@@ -164,6 +191,10 @@ class DatasetMenu(BoxLayout):
 
         self.frames_input = text_input("Frames:", changed=self._on_frames_change, default="frames/**/*.png")
         self.output_dataset_input = text_input("Dataset:", default=default_new_path)
+        self.all_frames_cb = labelled_checkbox("All frames:")
+        self.all_frames_cb.bind(active=self._on_all_frames_change)
+        self.cap_none_cb = labelled_checkbox("Cap none:", active=True)
+        self.cap_none_cb.bind(active=self._on_cap_none_change)
         
         self.info_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
         self.samples_label = Label(text="Samples: 0", size_hint_x=0.7, halign="left", valign="middle")
@@ -190,6 +221,7 @@ class DatasetMenu(BoxLayout):
 
     def _on_existing_change(self, val):
         self.existing_path_val = val
+        self._notify_change()
 
     def on_mode_change(self, *args):
         self.content_layout.clear_widgets()
@@ -198,16 +230,19 @@ class DatasetMenu(BoxLayout):
 
         if self.is_create:
             self.content_layout.add_widget(self.frames_input.parent)
+            self.content_layout.add_widget(self.all_frames_cb.parent)
+            self.content_layout.add_widget(self.cap_none_cb.parent)
             self.content_layout.add_widget(self.output_dataset_input.parent)
             self.content_layout.add_widget(self.info_layout)
-            self.content_layout.height = 90
-            self.height = 150
+            self.content_layout.height = 150
+            self.height = 210
             self._update_samples()
         else:
             self.content_layout.add_widget(self.existing_dropdown.parent)
             self.content_layout.add_widget(Label(size_hint_y=None, height=36)) # filler
             self.content_layout.height = 72
             self.height = 132
+            self._notify_change()
 
     @property
     def is_create(self):
@@ -217,11 +252,35 @@ class DatasetMenu(BoxLayout):
         Clock.unschedule(self._update_samples)
         Clock.schedule_once(self._update_samples, 0.5)
 
+    def _on_all_frames_change(self, instance, value):
+        self._update_samples()
+
+    def _on_cap_none_change(self, instance, value):
+        self._update_samples()
+
     def _update_samples(self, dt=0):
-        from project.dataset import get_dataset_samples
+        from project.dataset import get_dataset_samples, get_image_size_errors
         patterns = self.frames_input.text.split()
-        self.samples = get_dataset_samples(patterns)
-        self.samples_label.text = f"Samples: {len(self.samples)}"
+        self.samples = get_dataset_samples(
+            patterns,
+            all_frames=self.get_all_frames(),
+            cap_none=self.get_cap_none(),
+        )
+        try:
+            self.image_count, size_errors = get_image_size_errors(patterns)
+            self.size_error_count = len(size_errors)
+        except Exception as error:
+            self.image_count = 0
+            self.size_error_count = 1
+            self.samples_label.text = f"Image size check failed: {error}"
+            self._notify_change()
+            return
+
+        if self.size_error_count:
+            self.samples_label.text = f"Samples: {len(self.samples)} | {self.size_error_count} images not 640x128"
+        else:
+            self.samples_label.text = f"Samples: {len(self.samples)} | Images: {self.image_count}"
+        self._notify_change()
         
     def _open_details(self, instance):
         if not hasattr(self, 'samples'):
@@ -238,6 +297,19 @@ class DatasetMenu(BoxLayout):
     def get_patterns(self):
         return self.frames_input.text.split()
 
+    def get_all_frames(self):
+        return self.all_frames_cb.active
+
+    def get_cap_none(self):
+        return self.cap_none_cb.active
+
+    def has_valid_image_sizes(self):
+        return not self.is_create or (self.image_count > 0 and self.size_error_count == 0)
+
+    def _notify_change(self):
+        if self.on_change:
+            self.on_change()
+
 
 class TrainingPopup(Popup):
     def __init__(self, on_log=None, **kwargs):
@@ -249,14 +321,28 @@ class TrainingPopup(Popup):
         
         self.test_ds_menu = DatasetMenu("Test Dataset", "datasets/test_0.tar")
         layout.add_widget(self.test_ds_menu)
+
+        layout.add_widget(Label(text="Dataset Split", size_hint_y=None, height=30, bold=True))
+
+        self.auto_split_cb = labelled_checkbox("Auto split:", active=True)
+        layout.add_widget(self.auto_split_cb.parent)
+
+        self.test_ratio_input = text_input("Test %:", default="20")
+        layout.add_widget(self.test_ratio_input.parent)
         
         layout.add_widget(Label(text="Model", size_hint_y=None, height=30, bold=True))
 
         self.epochs_input = text_input("Epochs:", default="20")
         layout.add_widget(self.epochs_input.parent)
+
+        self.batch_size_input = text_input("Batch size:", default="32")
+        layout.add_widget(self.batch_size_input.parent)
         
         self.output_model_input = text_input("Model:", default="models/0.pth")
         layout.add_widget(self.output_model_input.parent)
+
+        self.start_from_scratch_cb = labelled_checkbox("Start from scratch:")
+        layout.add_widget(self.start_from_scratch_cb.parent)
         
         action_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=40)
         self.train_btn = Button(text="Train", size_hint_x=None, width=100)
@@ -268,12 +354,19 @@ class TrainingPopup(Popup):
         action_layout.add_widget(self.log_label)
 
         self.on_log = on_log
+        self.train_ds_menu.on_change = self._refresh_train_button
+        self.test_ds_menu.on_change = self._refresh_train_button
+        self._refresh_train_button()
         
         layout.add_widget(action_layout)
         layout.add_widget(Label())  # filler to push items to the top
         self.content = layout
 
     def _on_train(self, instance):
+        if not self._datasets_are_valid():
+            self._update_log("All dataset images must be 640x128 before training.")
+            return
+
         train_path = self.train_ds_menu.get_path()
         test_path = self.test_ds_menu.get_path()
         out_model = self.output_model_input.text
@@ -282,24 +375,75 @@ class TrainingPopup(Popup):
             epochs = int(self.epochs_input.text)
         except ValueError:
             epochs = 20
+
+        try:
+            batch_size = int(self.batch_size_input.text)
+        except ValueError:
+            batch_size = 32
+
+        try:
+            test_ratio = float(self.test_ratio_input.text.replace(",", "."))
+            if test_ratio > 1:
+                test_ratio /= 100
+        except ValueError:
+            test_ratio = 0.2
+
+        auto_split = (
+            self.auto_split_cb.active
+            and self.train_ds_menu.is_create
+            and self.test_ds_menu.is_create
+        )
+
+        if auto_split and train_path == test_path:
+            self._update_log("Train and test dataset paths must be different for auto split.")
+            return
         
         self.train_btn.disabled = True
         
         code = (
-            "from project.dataset import build_dataset\n"
+            "from project.dataset import build_dataset, build_train_test_datasets\n"
             "from project.model import run_training\n"
         )
-        
-        if self.train_ds_menu.is_create:
+
+        if auto_split:
             patterns = self.train_ds_menu.get_patterns()
-            code += f"build_dataset({patterns!r}, output_path={train_path!r})\n"
-            
-        if self.test_ds_menu.is_create:
-            if not self.train_ds_menu.is_create or train_path != test_path:
-                patterns = self.test_ds_menu.get_patterns()
-                code += f"build_dataset({patterns!r}, output_path={test_path!r})\n"
+            all_frames = self.train_ds_menu.get_all_frames()
+            cap_none = self.train_ds_menu.get_cap_none()
+            code += (
+                "build_train_test_datasets("
+                f"{patterns!r}, "
+                f"train_output_path={train_path!r}, "
+                f"test_output_path={test_path!r}, "
+                f"test_ratio={test_ratio!r}, "
+                f"all_frames={all_frames!r}, "
+                f"cap_none={cap_none!r}"
+                ")\n"
+            )
+        else:
+            if self.train_ds_menu.is_create:
+                patterns = self.train_ds_menu.get_patterns()
+                all_frames = self.train_ds_menu.get_all_frames()
+                cap_none = self.train_ds_menu.get_cap_none()
+                code += f"build_dataset({patterns!r}, output_path={train_path!r}, all_frames={all_frames!r}, cap_none={cap_none!r})\n"
+
+            if self.test_ds_menu.is_create:
+                if not self.train_ds_menu.is_create or train_path != test_path:
+                    patterns = self.test_ds_menu.get_patterns()
+                    all_frames = self.test_ds_menu.get_all_frames()
+                    cap_none = self.test_ds_menu.get_cap_none()
+                    code += f"build_dataset({patterns!r}, output_path={test_path!r}, all_frames={all_frames!r}, cap_none={cap_none!r})\n"
                 
-        code += f"run_training(train_dataset={train_path!r}, test_dataset={test_path!r}, model_path={out_model!r}, epochs={epochs})\n"
+        start_from_scratch = self.start_from_scratch_cb.active
+        code += (
+            "run_training("
+            f"train_dataset={train_path!r}, "
+            f"test_dataset={test_path!r}, "
+            f"model_path={out_model!r}, "
+            f"batch_size={batch_size}, "
+            f"epochs={epochs}, "
+            f"start_from_scratch={start_from_scratch!r}"
+            ")\n"
+        )
         
         process = subprocess.Popen(
             [sys.executable, "-u", "-c", code],
@@ -314,13 +458,24 @@ class TrainingPopup(Popup):
                 if line:
                     Clock.schedule_once(lambda dt, l=line.strip(): self._update_log(l))
             p.stdout.close()
-            p.wait()
-            Clock.schedule_once(lambda dt: self._update_log("Finished!"))
+            return_code = p.wait()
+            status = "Finished!" if return_code == 0 else f"Failed with exit code {return_code}"
+            Clock.schedule_once(lambda dt, s=status: self._update_log(s))
             Clock.schedule_once(lambda dt: setattr(self.train_btn, 'disabled', False))
 
         threading.Thread(target=read_output, args=(process,), daemon=True).start()
 
         self.dismiss()
+
+    def _datasets_are_valid(self):
+        return (
+            self.train_ds_menu.has_valid_image_sizes()
+            and self.test_ds_menu.has_valid_image_sizes()
+        )
+
+    def _refresh_train_button(self):
+        if hasattr(self, "train_btn"):
+            self.train_btn.disabled = not self._datasets_are_valid()
 
     def _update_log(self, text):
         self.log_label.text = text
@@ -398,6 +553,38 @@ class RecordingContainer(BoxLayout):
 
         self.gray_cb = labelled_checkbox("Grayscale:")
         sidebar.add_widget(self.gray_cb.parent)
+
+        self.brightness_slider = labelled_slider("Brightness:", -100, 100, 0, 1)
+        sidebar.add_widget(self.brightness_slider.parent)
+
+        self.exposure_slider = labelled_slider("Exposure:", -3, 3, 0, 0.1, "{:.1f}")
+        sidebar.add_widget(self.exposure_slider.parent)
+
+        self.contrast_slider = labelled_slider("Contrast:", 0, 3, 1, 0.05, "{:.2f}")
+        sidebar.add_widget(self.contrast_slider.parent)
+
+        reset_camera_button = Button(
+            text="Reset camera params",
+            size_hint_y=None,
+            height=38,
+        )
+        reset_camera_button.bind(on_release=self._reset_camera_params)
+        sidebar.add_widget(reset_camera_button)
+
+        self.perturb_save_cb = labelled_checkbox("Perturb save:")
+        sidebar.add_widget(self.perturb_save_cb.parent)
+
+        self.brightness_delta_input = text_input("Brightness +/-:", default="35")
+        sidebar.add_widget(self.brightness_delta_input.parent)
+
+        self.exposure_delta_input = text_input("Exposure +/-:", default="0.6")
+        sidebar.add_widget(self.exposure_delta_input.parent)
+
+        self.contrast_delta_input = text_input("Contrast +/-:", default="0.25")
+        sidebar.add_widget(self.contrast_delta_input.parent)
+
+        self.perspective_delta_input = text_input("Perspective px:", default="10")
+        sidebar.add_widget(self.perspective_delta_input.parent)
 
         self.recording_button = Button(
             text="Recording: OFF",
@@ -529,6 +716,13 @@ class RecordingContainer(BoxLayout):
         self._update_sidebar()
 
     def _transform_frame(self, frame, outline: bool = False):
+        frame = frame.copy()
+
+        exposure_scale = 2 ** self.exposure_slider.value
+        contrast = self.contrast_slider.value
+        brightness = self.brightness_slider.value
+        frame = np.clip(frame.astype(np.float32) * exposure_scale * contrast + brightness, 0, 255).astype(np.uint8)
+
         if self.gray_cb.active:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
@@ -545,6 +739,12 @@ class RecordingContainer(BoxLayout):
             frame = self.cropping_region.apply(frame)
 
         return frame
+
+    def _reset_camera_params(self, *_):
+        self.brightness_slider.value = 0
+        self.exposure_slider.value = 0
+        self.contrast_slider.value = 1
+        self.gray_cb.active = False
 
     def _update_train_log(self, t: str):
         epoch_match = re.search(r"^Epoch\s+(\d+)", t)
@@ -570,6 +770,64 @@ class RecordingContainer(BoxLayout):
 
         self.image_view.update_image(frame)
 
+    def _float_input(self, input_widget: TextInput, default: float = 0.0) -> float:
+        try:
+            return float(input_widget.text.replace(",", "."))
+        except ValueError:
+            return default
+
+    def _perturbation_config(self) -> dict[str, float]:
+        return {
+            "brightness": max(0.0, self._float_input(self.brightness_delta_input)),
+            "exposure": max(0.0, self._float_input(self.exposure_delta_input)),
+            "contrast": max(0.0, self._float_input(self.contrast_delta_input)),
+            "perspective": max(0.0, self._float_input(self.perspective_delta_input)),
+        }
+
+    def _random_perturbation(self, config: dict[str, float]) -> dict[str, float | np.ndarray]:
+        perspective_delta = config["perspective"]
+        corner_offsets = np.random.uniform(
+            -perspective_delta,
+            perspective_delta,
+            size=(4, 2),
+        ).astype(np.float32)
+
+        return {
+            "brightness": np.random.uniform(-config["brightness"], config["brightness"]),
+            "exposure": np.random.uniform(-config["exposure"], config["exposure"]),
+            "contrast": np.random.uniform(-config["contrast"], config["contrast"]),
+            "corner_offsets": corner_offsets,
+        }
+
+    def _apply_perturbation(self, frame: MatLike, params: dict[str, float | np.ndarray]) -> MatLike:
+        brightness = float(params["brightness"])
+        exposure_scale = 2 ** float(params["exposure"])
+        contrast = max(0.05, 1.0 + float(params["contrast"]))
+
+        perturbed = np.clip(
+            frame.astype(np.float32) * exposure_scale * contrast + brightness,
+            0,
+            255,
+        ).astype(np.uint8)
+
+        corner_offsets = params["corner_offsets"]
+        if isinstance(corner_offsets, np.ndarray) and np.any(corner_offsets):
+            h, w = perturbed.shape[:2]
+            source = np.array(
+                [[0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1]],
+                dtype=np.float32,
+            )
+            destination = source + corner_offsets
+            matrix = cv2.getPerspectiveTransform(source, destination)
+            perturbed = cv2.warpPerspective(
+                perturbed,
+                matrix,
+                (w, h),
+                borderMode=cv2.BORDER_REPLICATE,
+            )
+
+        return perturbed
+
     def save_frame(self, index: int, prefix: str | None = None):
         if not self.recording_enabled:
             return
@@ -581,6 +839,9 @@ class RecordingContainer(BoxLayout):
         frame = self.frame_buffer[index]
 
         notes = sorted(note.name for note in frame.notes)
+        if not notes and random.random() > NONE_SAVE_PROBABILITY:
+            return
+
         notes_str = "_".join(notes) if notes else "none"
         pressed_keys = (
             len(notes)
@@ -588,29 +849,50 @@ class RecordingContainer(BoxLayout):
             else int(self.selected_pressed_keys)
         )
         saved_paths = []
-        for i in range(0, 3):
+        cropped_frames = []
+        for i in range(3):
             frame_idx = index + 2 - i
-            b_frame = self.frame_buffer[frame_idx].data
-
-            path = Path("frames") / self.selected_hand / str(pressed_keys) / self.selected_fingers
-
-            if prefix:
-                path /= f"{prefix}_{notes_str}_{i}.png"
-            else:
-                path /= f"{notes_str}_{i}.png"
-            
-            path = self._resolve_save_path(path)
-            path.parent.mkdir(parents=True, exist_ok=True)
-
-            cropped = self._transform_frame(b_frame)
+            cropped = self._transform_frame(self.frame_buffer[frame_idx].data)
             if cropped is None:
                 continue
+            cropped_frames.append((i, frame_idx, cropped))
 
-            if cv2.imwrite(path, cropped):
-                saved_paths.append(path)
-                print(f"Saved frame {frame_idx} to {path}")
-            else:
-                print(f"Could not save frame {frame_idx} to {path}")
+        if len(cropped_frames) != 3:
+            return
+
+        variants: list[tuple[str | None, list[tuple[int, int, MatLike]]]] = [(None, cropped_frames)]
+        if self.perturb_save_cb.active:
+            config = self._perturbation_config()
+            variants = []
+            for variant_idx in range(3):
+                params = self._random_perturbation(config)
+                augmented_frames = [
+                    (i, frame_idx, self._apply_perturbation(cropped, params))
+                    for i, frame_idx, cropped in cropped_frames
+                ]
+                variants.append((f"aug{variant_idx + 1}", augmented_frames))
+
+        for variant_name, frames in variants:
+            for i, frame_idx, cropped in frames:
+                path = Path("frames") / self.selected_hand / str(pressed_keys) / self.selected_fingers
+
+                filename_parts = []
+                if variant_name:
+                    filename_parts.append(variant_name)
+                if prefix:
+                    filename_parts.append(prefix)
+                filename_parts.append(notes_str)
+                filename = "_".join(filename_parts)
+                path /= f"{filename}_{i}.png"
+
+                path = self._resolve_save_path(path)
+                path.parent.mkdir(parents=True, exist_ok=True)
+
+                if cv2.imwrite(path, cropped):
+                    saved_paths.append(path)
+                    print(f"Saved frame {frame_idx} to {path}")
+                else:
+                    print(f"Could not save frame {frame_idx} to {path}")
 
         if not saved_paths:
             return
@@ -620,6 +902,7 @@ class RecordingContainer(BoxLayout):
             "label": (
                 f"{self.selected_hand}/{pressed_keys}/"
                 f"{self.selected_fingers}/{notes_str}"
+                f"{' x3 perturbed' if self.perturb_save_cb.active else ''}"
             ),
             "paths": saved_paths,
         })

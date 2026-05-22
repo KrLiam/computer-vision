@@ -19,10 +19,27 @@ def run():
             from project.model import run_test
             run_test()
         case "dataset":
-            from project.dataset import build_dataset, dataset_info
+            from project.dataset import build_dataset, build_train_test_datasets, dataset_info
             match args.dataset_command:
                 case "build":
-                    build_dataset(args.images, args.output)
+                    if args.test_output:
+                        build_train_test_datasets(
+                            args.images,
+                            train_output_path=args.output,
+                            test_output_path=args.test_output,
+                            test_ratio=args.test_ratio,
+                            seed=args.split_seed,
+                            all_frames=args.all_frames,
+                            cap_none=args.cap_none,
+                        )
+                    else:
+                        build_dataset(
+                            args.images,
+                            args.output,
+                            all_frames=args.all_frames,
+                            cap_none=args.cap_none,
+                            seed=args.split_seed,
+                        )
                 case "info":
                     dataset_info(args.path)
                 case "record":

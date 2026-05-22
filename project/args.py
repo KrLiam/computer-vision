@@ -117,7 +117,34 @@ def parse_args():
         "--output",
         type=str,
         default="dataset.tar",
-        help="Output dataset path, a '.tar' file",
+        help="Output dataset path, a '.tar' file, or train dataset path when --test-output is used",
+    )
+    dataset_build_parser.add_argument(
+        "--test-output",
+        type=str,
+        help="Optional test dataset path. When set, the matched images are split into train and test datasets",
+    )
+    dataset_build_parser.add_argument(
+        "--test-ratio",
+        type=float,
+        default=0.2,
+        help="Fraction of samples to put in the test dataset when --test-output is used",
+    )
+    dataset_build_parser.add_argument(
+        "--split-seed",
+        type=int,
+        default=42,
+        help="Random seed used to split train and test datasets",
+    )
+    dataset_build_parser.add_argument(
+        "--all-frames",
+        action="store_true",
+        help="Use every matched image as a dataset sample instead of grouping triplets",
+    )
+    dataset_build_parser.add_argument(
+        "--cap-none",
+        action="store_true",
+        help="Limit samples with no pressed notes to the count of the most frequent note",
     )
 
     dataset_info_parser = dataset_subparsers.add_parser("info", help="Get dataset information")

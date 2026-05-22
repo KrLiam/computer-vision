@@ -1,5 +1,8 @@
 from pathlib import Path
+import os
 import random
+import shutil
+import traceback
 
 import torch
 from torch import nn
@@ -116,9 +119,75 @@ def test(dataloader, model, loss_fn):
 
 
 def save_model(model: NeuralNetwork, path: str):
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), path)
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    try:
+        torch.save(model.state_dict(), tmp_path)
+        os.replace(tmp_path, path)
+    except Exception:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                ...
+        raise
     print(f"Saved PyTorch Model State to {path}")
+
+
+def checkpoint_dir(model_path: str) -> Path:
+    path = Path(model_path)
+    return path.with_name(f"{path.stem}_backups")
+
+
+def checkpoint_path(model_path: str, name: str) -> str:
+    return str(checkpoint_dir(model_path) / f"{name}.pth")
+
+
+def save_checkpoint(model: NeuralNetwork, model_path: str, name: str) -> bool:
+    try:
+        save_model(model, checkpoint_path(model_path, name))
+        cleanup_old_checkpoints(model_path)
+        return True
+    except Exception as error:
+        print(f"Warning: checkpoint save failed: {error}")
+        return False
+
+
+def cleanup_old_checkpoints(model_path: str, keep: int = 3):
+    path = checkpoint_dir(model_path)
+    if not path.exists():
+        return
+
+    checkpoints = sorted(
+        path.glob("epoch_*.pth"),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+    for old_checkpoint in checkpoints[keep:]:
+        try:
+            old_checkpoint.unlink()
+        except OSError:
+            ...
+
+
+def cleanup_checkpoints(model_path: str):
+    path = checkpoint_dir(model_path)
+    if path.exists():
+        shutil.rmtree(path)
+        print(f"Removed training backups from {path}")
+
+
+def save_training_error_log(model_path: str, error: BaseException):
+    path = checkpoint_dir(model_path)
+    path.mkdir(parents=True, exist_ok=True)
+
+    log_path = path / "error.log"
+    log_path.write_text(
+        "".join(traceback.format_exception(type(error), error, error.__traceback__)),
+        encoding="utf-8",
+    )
+    print(f"Saved training error log to {log_path}")
 
 
 def load_model(path: str, model: NeuralNetwork | None = None) -> NeuralNetwork:
@@ -136,6 +205,7 @@ def run_training(
     epochs: int = 20,
     model_path: str = MODEL_PATH,
     target_accuracy: float = 1.0,
+    start_from_scratch: bool = False,
 ):
     # Dataset
     train_dataloader = load_dataset(train_dataset, batch_size=batch_size)
@@ -144,35 +214,53 @@ def run_training(
 
     # Initialize model
     model = NeuralNetwork().to(DEVICE)
-    try:
-        load_model(model_path, model)
-        print(f"Model '{model_path}' loaded successfully!")
-    except FileNotFoundError:
-        ...
+    if start_from_scratch:
+        print("Starting from scratch, ignoring any existing model file.")
+    else:
+        try:
+            load_model(model_path, model)
+            print(f"Model '{model_path}' loaded successfully!")
+        except FileNotFoundError:
+            ...
 
     # Optimize model parameters
 
     loss_fn = nn.BCEWithLogitsLoss() # Multi-class
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-    accuracy = test(test_dataloader, model, loss_fn)
-    if accuracy >= target_accuracy:
-        print(f"Model already reached target accuracy ({target_accuracy*100:>.1f}%), exiting.")
-        return
+    try:
+        accuracy = test(test_dataloader, model, loss_fn)
+        if accuracy >= target_accuracy:
+            print(f"Model already reached target accuracy ({target_accuracy*100:>.1f}%), exiting.")
+            save_model(model, model_path)
+            cleanup_checkpoints(model_path)
+            return
 
-    test_i = max(1.0, round(1 / test_frequency))
-    for t in range(epochs):
-        print(f"Epoch {t+1}\n-------------------------------")
-        train(train_dataloader, model, loss_fn, optimizer)
-        if test_i > 0 and (t + 1) % test_i == 0:
-            accuracy = test(test_dataloader, model, loss_fn)
-            if accuracy >= target_accuracy:
-                print(f"Model reached target accuracy ({target_accuracy*100:>.1f}%), stopping training.")
-                return
+        test_i = max(1.0, round(1 / test_frequency))
+        for t in range(epochs):
+            epoch = t + 1
+            print(f"Epoch {epoch}\n-------------------------------")
+            train(train_dataloader, model, loss_fn, optimizer)
+            save_checkpoint(model, model_path, f"epoch_{epoch}")
+            if test_i > 0 and epoch % test_i == 0:
+                accuracy = test(test_dataloader, model, loss_fn)
+                if accuracy >= target_accuracy:
+                    print(f"Model reached target accuracy ({target_accuracy*100:>.1f}%), stopping training.")
+                    save_model(model, model_path)
+                    cleanup_checkpoints(model_path)
+                    return
 
-    print("Done!")
-
-    save_model(model, model_path)
+        print("Done!")
+        save_model(model, model_path)
+        cleanup_checkpoints(model_path)
+    except Exception as error:
+        save_training_error_log(model_path, error)
+        try:
+            save_checkpoint(model, model_path, "failed_latest")
+            print(f"Training failed. Backups kept in {checkpoint_dir(model_path)}")
+        except Exception as checkpoint_error:
+            print(f"Training failed and checkpoint save failed: {checkpoint_error}")
+        raise
 
 
 def run_test():
