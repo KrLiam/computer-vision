@@ -160,7 +160,7 @@ def cleanup_old_checkpoints(model_path: str, keep: int = 3):
         return
 
     checkpoints = sorted(
-        path.glob("epoch_*.pth"),
+        path.glob("*.pth"),
         key=lambda item: item.stat().st_mtime,
         reverse=True,
     )
@@ -241,9 +241,9 @@ def run_training(
             epoch = t + 1
             print(f"Epoch {epoch}\n-------------------------------")
             train(train_dataloader, model, loss_fn, optimizer)
-            save_checkpoint(model, model_path, f"epoch_{epoch}")
             if test_i > 0 and epoch % test_i == 0:
                 accuracy = test(test_dataloader, model, loss_fn)
+                save_checkpoint(model, model_path, f"accuracy_{accuracy*100:05.2f}_epoch_{epoch}".replace(".", "_"))
                 if accuracy >= target_accuracy:
                     print(f"Model reached target accuracy ({target_accuracy*100:>.1f}%), stopping training.")
                     save_model(model, model_path)
