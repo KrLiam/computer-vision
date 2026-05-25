@@ -197,6 +197,18 @@ def load_model(path: str, model: NeuralNetwork | None = None) -> NeuralNetwork:
     return model
 
 
+def calculate_weights(dataloader: DataLoader) -> torch.Tensor:
+    # inicialize tensor 1x61
+    N_pos = torch.zeros(61)
+    for _, y in dataloader:
+        # y possui dimensão batch x 61
+        N_pos += y.sum(dim=0)
+
+    N_total = len(dataloader)
+    N_neg = N_total - N_pos
+    return N_neg / N_pos
+
+
 def run_training(
     train_dataset: str,
     test_dataset: str,
@@ -224,9 +236,11 @@ def run_training(
             ...
 
     # Optimize model parameters
-
-    loss_fn = nn.BCEWithLogitsLoss() # Multi-class
+    print("Calculating class weights...")
+    pos_weight = calculate_weights(train_dataloader)
+    loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight) # Multi-class
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    print("Finished initializing model, loss function and optimizer.")
 
     try:
         accuracy = test(test_dataloader, model, loss_fn)
