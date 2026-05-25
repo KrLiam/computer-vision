@@ -191,8 +191,6 @@ class DatasetMenu(BoxLayout):
 
         self.frames_input = text_input("Frames:", changed=self._on_frames_change, default="frames/**/*.png")
         self.output_dataset_input = text_input("Dataset:", default=default_new_path)
-        self.all_frames_cb = labelled_checkbox("All frames:")
-        self.all_frames_cb.bind(active=self._on_all_frames_change)
         self.cap_none_cb = labelled_checkbox("Cap none:", active=True)
         self.cap_none_cb.bind(active=self._on_cap_none_change)
         
@@ -230,7 +228,6 @@ class DatasetMenu(BoxLayout):
 
         if self.is_create:
             self.content_layout.add_widget(self.frames_input.parent)
-            self.content_layout.add_widget(self.all_frames_cb.parent)
             self.content_layout.add_widget(self.cap_none_cb.parent)
             self.content_layout.add_widget(self.output_dataset_input.parent)
             self.content_layout.add_widget(self.info_layout)
@@ -252,9 +249,6 @@ class DatasetMenu(BoxLayout):
         Clock.unschedule(self._update_samples)
         Clock.schedule_once(self._update_samples, 0.5)
 
-    def _on_all_frames_change(self, instance, value):
-        self._update_samples()
-
     def _on_cap_none_change(self, instance, value):
         self._update_samples()
 
@@ -263,7 +257,6 @@ class DatasetMenu(BoxLayout):
         patterns = self.frames_input.text.split()
         self.samples = get_dataset_samples(
             patterns,
-            all_frames=self.get_all_frames(),
             cap_none=self.get_cap_none(),
         )
         try:
@@ -296,9 +289,6 @@ class DatasetMenu(BoxLayout):
 
     def get_patterns(self):
         return self.frames_input.text.split()
-
-    def get_all_frames(self):
-        return self.all_frames_cb.active
 
     def get_cap_none(self):
         return self.cap_none_cb.active
@@ -407,7 +397,6 @@ class TrainingPopup(Popup):
 
         if auto_split:
             patterns = self.train_ds_menu.get_patterns()
-            all_frames = self.train_ds_menu.get_all_frames()
             cap_none = self.train_ds_menu.get_cap_none()
             code += (
                 "build_train_test_datasets("
@@ -415,23 +404,20 @@ class TrainingPopup(Popup):
                 f"train_output_path={train_path!r}, "
                 f"test_output_path={test_path!r}, "
                 f"test_ratio={test_ratio!r}, "
-                f"all_frames={all_frames!r}, "
                 f"cap_none={cap_none!r}"
                 ")\n"
             )
         else:
             if self.train_ds_menu.is_create:
                 patterns = self.train_ds_menu.get_patterns()
-                all_frames = self.train_ds_menu.get_all_frames()
                 cap_none = self.train_ds_menu.get_cap_none()
-                code += f"build_dataset({patterns!r}, output_path={train_path!r}, all_frames={all_frames!r}, cap_none={cap_none!r})\n"
+                code += f"build_dataset({patterns!r}, output_path={train_path!r}, cap_none={cap_none!r})\n"
 
             if self.test_ds_menu.is_create:
                 if not self.train_ds_menu.is_create or train_path != test_path:
                     patterns = self.test_ds_menu.get_patterns()
-                    all_frames = self.test_ds_menu.get_all_frames()
                     cap_none = self.test_ds_menu.get_cap_none()
-                    code += f"build_dataset({patterns!r}, output_path={test_path!r}, all_frames={all_frames!r}, cap_none={cap_none!r})\n"
+                    code += f"build_dataset({patterns!r}, output_path={test_path!r}, cap_none={cap_none!r})\n"
                 
         start_from_scratch = self.start_from_scratch_cb.active
         code += (

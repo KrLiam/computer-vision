@@ -91,7 +91,6 @@ def frames_to_tensor(
 
 def get_dataset_samples(
     patterns: list[str],
-    all_frames: bool = False,
     cap_none: bool = False,
     first_note: int = 36, # C2
     num_notes: int = 61,
@@ -102,11 +101,6 @@ def get_dataset_samples(
     for pattern in patterns:
         normalized_pattern = os.path.normpath(pattern)
         for path in glob.glob(normalized_pattern, recursive=True):
-            if all_frames:
-                key = os.path.splitext(path)[0]
-                samples[key] = [(0, path), (1, path), (2, path)]
-                continue
-
             basename = os.path.basename(path)
             name, _ = os.path.splitext(basename)
             parts = name.split('_')
@@ -124,11 +118,10 @@ def get_dataset_samples(
                 
             samples[key].append((frame_idx, path))
 
-    if not all_frames:
-        for key in list(samples.keys()):
-            frames = samples[key]
-            if len(frames) != 3:
-                del samples[key]
+    for key in list(samples.keys()):
+        frames = samples[key]
+        if len(frames) != 3:
+            del samples[key]
 
     if cap_none:
         samples = cap_none_samples(samples, first_note, num_notes, seed)
@@ -279,7 +272,6 @@ def build_dataset(
     output_path: str = "dataset.tar",
     first_note: int = 36, # C2
     num_notes: int = 61,
-    all_frames: bool = False,
     cap_none: bool = False,
     seed: int = 42,
 ):
@@ -287,7 +279,6 @@ def build_dataset(
 
     samples = get_dataset_samples(
         patterns,
-        all_frames=all_frames,
         cap_none=cap_none,
         first_note=first_note,
         num_notes=num_notes,
@@ -306,14 +297,12 @@ def build_train_test_datasets(
     seed: int = 42,
     first_note: int = 36, # C2
     num_notes: int = 61,
-    all_frames: bool = False,
     cap_none: bool = False,
 ):
     print("Building train/test datasets")
 
     samples = get_dataset_samples(
         patterns,
-        all_frames=all_frames,
         cap_none=cap_none,
         first_note=first_note,
         num_notes=num_notes,
