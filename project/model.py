@@ -266,7 +266,7 @@ def run_training(
 
         print("Done!")
         save_model(model, model_path)
-        cleanup_checkpoints(model_path)
+        # cleanup_checkpoints(model_path)
     except Exception as error:
         save_training_error_log(model_path, error)
         try:
