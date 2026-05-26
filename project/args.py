@@ -81,10 +81,16 @@ def parse_args():
         help="Path for the image.",
     )
     area_parser.add_argument(
-        "--threshold",
-        type=int,
-        default=210,
-        help="Color threshold for the white key.",
+        "--plot",
+        action="store_true",
+        default=False,
+        help="Whether should produce a single plot with the images.",
+    )
+    area_parser.add_argument(
+        "--save-images",
+        action="store_true",
+        default=False,
+        help="Whether the output images should be saved.",
     )
 
     # Dataset subcommand

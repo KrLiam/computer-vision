@@ -57,4 +57,4 @@ def run():
             run_vision(args.model, args.camera)
         case "area":
             from project.area import debug_keyboard
-            debug_keyboard(args.input, args.threshold)
+            debug_keyboard(args.input, args.save_images, args.plot)
