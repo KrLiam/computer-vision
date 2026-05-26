@@ -572,13 +572,23 @@ class RecordingContainer(BoxLayout):
         self.perspective_delta_input = text_input("Perspective px:", default="10")
         sidebar.add_widget(self.perspective_delta_input.parent)
 
+        recording_buttons = BoxLayout(orientation='horizontal', size_hint_min_y=43)
         self.recording_button = Button(
             text="Recording: OFF",
             size_hint_y=None,
             height=42,
         )
         self.recording_button.bind(on_release=self._toggle_recording)
-        sidebar.add_widget(self.recording_button)
+        recording_buttons.add_widget(self.recording_button)
+        self.record_single_button = Button(
+            text="Record Single",
+            size_hint_y=None,
+            size_hint_x=0.5,
+            height=42,
+        )
+        self.record_single_button.bind(on_release=self._record_single)
+        recording_buttons.add_widget(self.record_single_button)
+        sidebar.add_widget(recording_buttons)
 
         self.replace_button = Button(
             text="Replace: ON",
@@ -814,7 +824,12 @@ class RecordingContainer(BoxLayout):
 
         return perturbed
 
-    def save_frame(self, index: int, prefix: str | None = None):
+    def save_frame(
+        self,
+        index: int,
+        prefix: str | None = None,
+        none_save_probability: float = NONE_SAVE_PROBABILITY
+    ):
         if not self.recording_enabled:
             return
         
@@ -825,7 +840,7 @@ class RecordingContainer(BoxLayout):
         frame = self.frame_buffer[index]
 
         notes = sorted(note.name for note in frame.notes)
-        if not notes and random.random() > NONE_SAVE_PROBABILITY:
+        if not notes and random.random() > none_save_probability:
             return
 
         notes_str = "_".join(notes) if notes else "none"
@@ -918,6 +933,12 @@ class RecordingContainer(BoxLayout):
         self.replace_enabled = not self.replace_enabled
         state = "ON" if self.replace_enabled else "OFF"
         self.replace_button.text = f"Replace: {state}"
+
+    def _record_single(self, *_):
+        v = self.recording_enabled
+        self.recording_enabled = True
+        self.save_frame(0, none_save_probability=1.0)
+        self.recording_enabled = v
 
     def _resolve_save_path(self, filepath: Path) -> Path:
         prefix = 0
