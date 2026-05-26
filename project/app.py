@@ -17,7 +17,11 @@ def run():
             )
         case "test":
             from project.model import run_test
-            run_test()
+            run_test(
+                test_dataset=args.test_dataset,
+                batch_size=args.batch_size,
+                model_path=args.model,
+            )
         case "dataset":
             from project.dataset import build_dataset, build_train_test_datasets, dataset_info
             match args.dataset_command:

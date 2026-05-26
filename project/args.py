@@ -156,6 +156,23 @@ def parse_args():
     )
 
     # Test command
-    subparsers.add_parser("test", help="Run model inference on a random test sample")
+    test_parser = subparsers.add_parser("test", help="Run model inference on a random test sample")
+    test_parser.add_argument(
+        "--test-dataset",
+        type=str,
+        default="dataset.tar",
+        help="Path to the test dataset '.tar' or '.pt' file",
+    )
+    test_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        help="Batch size for testing",
+    )
+    test_parser.add_argument(
+        "--model",
+        type=str,
+        help="Path for the trained model to use.",
+    )
 
     return parser.parse_args()

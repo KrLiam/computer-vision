@@ -7,8 +7,6 @@ import traceback
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
-from torchvision.datasets import FashionMNIST
-from torchvision.transforms import ToTensor, ToPILImage
 
 from project.dataset import get_fashion_dataset, load_dataset
 from project.midi import tensor_to_notes
@@ -200,13 +198,15 @@ def load_model(path: str, model: NeuralNetwork | None = None) -> NeuralNetwork:
 def calculate_weights(dataloader: DataLoader) -> torch.Tensor:
     # inicialize tensor 1x61
     N_pos = torch.zeros(61)
+    N_total = 0
     for _, y in dataloader:
+        N_total += y.size(0)
         # y possui dimensão batch x 61
         N_pos += y.sum(dim=0)
 
-    N_total = len(dataloader)
     N_neg = N_total - N_pos
-    return N_neg / N_pos
+    weights = N_neg / N_pos
+    return weights.to(DEVICE)
 
 
 def run_training(
@@ -277,23 +277,27 @@ def run_training(
         raise
 
 
-def run_test():
+def run_test(
+    test_dataset: str,
+    batch_size: int = 32,
+    model_path: str = MODEL_PATH,
+):
     # Dataset
-    train_dataloader, test_dataloader = get_fashion_dataset()
-    test_data = test_dataloader.dataset
-    classes: list[str] = test_data.classes
+    test_dataloader = load_dataset(test_dataset, batch_size=batch_size)
+    print(f"Loaded test dataset '{test_dataset}' with batch size {batch_size}")
 
     # Initialize model
-    model = load_model(MODEL_PATH)
+    model = NeuralNetwork().to(DEVICE)
+    try:
+        load_model(model_path, model)
+        print(f"Model '{model_path}' loaded successfully!")
+    except FileNotFoundError:
+        ...
 
-    model.eval()
-    i = random.randint(0, len(test_data) - 1)
-    x, y = test_data[i][0], test_data[i][1]
+    #pos_weight = calculate_weights(train_dataloader)
+    loss_fn = nn.BCEWithLogitsLoss(
+        #pos_weight=pos_weight
+    ) # Multi-class
 
-    ToPILImage()(x).show()
+    test(test_dataloader, model, loss_fn)
 
-    with torch.no_grad():
-        x = x.to(DEVICE)
-        pred = model(x)
-        predicted, actual = classes[pred[0].argmax(0)], classes[y]
-        print(f'Predicted: "{predicted}", Actual: "{actual}"')
