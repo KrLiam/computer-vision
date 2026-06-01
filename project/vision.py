@@ -1,5 +1,4 @@
 import os
-import os
 import datetime
 import json
 import torch
@@ -14,7 +13,7 @@ from project.crop import CroppingRegion
 from project.dataset import frames_to_tensor
 from project.midi import format_note, get_note_code, guess_key_positions
 from project.model import DEVICE, NeuralNetwork, load_model
-from project.record import labelled_checkbox, labelled_dropdown, text_input
+from project.record import PRESETS_DIR, labelled_checkbox, labelled_dropdown, text_input
 
 # Disable Kivy's argument parser to avoid conflicts with our own argparse
 os.environ["KIVY_NO_ARGS"] = "1"
@@ -31,6 +30,8 @@ from kivy.uix.slider import Slider
 from project.image_view import ImageView
 
 LAST_SKEW_CONFIG_PATH = Path("frames") / "last_skew.json"
+CAMERA_PRESET_OPTION = "Camera"
+ALL_PRESETS_OPTION = "All presets"
 
 
 def labelled_slider(
@@ -74,7 +75,16 @@ class VisionContainer(BoxLayout):
         self.log_lines = deque(maxlen=10)
         self.status_text = "Waiting for frames"
         self.is_frozen = False
+        self.auto_crop = True
         self.frozen_frame = None
+        self.preset_path = None
+        self.preset_capture = None
+        self.preset_options = []
+        self.preset_playlist = []
+        self.preset_playlist_index = 0
+        self.loop_all_presets = False
+        self.preset_paused = False
+        self.last_preset_frame = None
 
         self.build(initial_frame)
         if initial_frame is not None:
@@ -112,7 +122,10 @@ class VisionContainer(BoxLayout):
         
 
     def build(self, initial_frame: MatLike | None):
-        self.image_view = ImageView(size_hint=(0.7, 1.0))
+        preset_panel = BoxLayout(orientation='vertical', size_hint=(0.2, 1.0), padding=(0, 0, 5, 0), spacing=6)
+        self.add_widget(preset_panel)
+
+        self.image_view = ImageView(size_hint=(0.5, 1.0))
         self.add_widget(self.image_view.build())
 
         sidebar = BoxLayout(orientation='vertical', size_hint=(0.3, 1.0))
@@ -162,6 +175,15 @@ class VisionContainer(BoxLayout):
         self.load_skew_button.bind(on_release=self._load_last_skew)
         sidebar.add_widget(self.load_skew_button)
 
+        self.auto_crop_button = Button(
+            text="Auto-crop: ON",
+            size_hint_y=None,
+            height=38,
+        )
+        self.auto_crop_button.bind(on_release=self._toggle_auto_crop)
+        sidebar.add_widget(self.auto_crop_button)
+
+
         self.freeze_button = Button(
             text="Freeze image",
             size_hint_y=None,
@@ -169,6 +191,34 @@ class VisionContainer(BoxLayout):
         )
         self.freeze_button.bind(on_release=self._toggle_freeze)
         sidebar.add_widget(self.freeze_button)
+
+        preset_layout = BoxLayout(orientation='vertical', size_hint_y=None, height=78, spacing=4)
+        self.preset_dropdown = labelled_dropdown(
+            "Preset:",
+            self._preset_options(),
+            CAMERA_PRESET_OPTION,
+            self._on_preset_select,
+            max_height=260,
+        )
+        preset_layout.add_widget(self.preset_dropdown.parent)
+        refresh_presets_btn = Button(text="Refresh", size_hint_y=None, height=38)
+        refresh_presets_btn.bind(on_release=self._on_refresh_presets)
+        preset_layout.add_widget(refresh_presets_btn)
+        preset_panel.add_widget(preset_layout)
+
+        preset_controls = BoxLayout(orientation='vertical', size_hint_y=None, height=122, spacing=4)
+        self.loop_presets_button = Button(text="Loop all", size_hint_y=None, height=38)
+        self.loop_presets_button.bind(on_release=self._loop_all_presets)
+        preset_controls.add_widget(self.loop_presets_button)
+
+        self.pause_preset_button = Button(text="Pause", size_hint_y=None, height=38)
+        self.pause_preset_button.bind(on_release=self._toggle_preset_pause)
+        preset_controls.add_widget(self.pause_preset_button)
+
+        self.next_preset_button = Button(text="Next", size_hint_y=None, height=38)
+        self.next_preset_button.bind(on_release=self._next_preset)
+        preset_controls.add_widget(self.next_preset_button)
+        preset_panel.add_widget(preset_controls)
 
         self.flip_x_cb = labelled_checkbox("Flip X:")
         sidebar.add_widget(self.flip_x_cb.parent)
@@ -209,7 +259,7 @@ class VisionContainer(BoxLayout):
         sidebar.add_widget(self.log_label)
         self.add_widget(sidebar)
 
-        Clock.schedule_interval(self.update_keyboard_area, 0.5)
+        Clock.schedule_interval(lambda _: self.update_keyboard_area(), 0.5)
 
     def _read_last_skew_config(self):
         if not LAST_SKEW_CONFIG_PATH.exists():
@@ -247,11 +297,22 @@ class VisionContainer(BoxLayout):
         self.cropping_region.skew_points = points
         self.status_text = "Loaded last skew"
         
+    def _toggle_auto_crop(self, *_):
+        self.auto_crop = not self.auto_crop
+        self.auto_crop_button.text = f"Auto-crop: {'ON' if self.auto_crop else 'OFF'}"
+
     def update(self, dt, frame_data: MatLike):
         raw_frame = frame_data
+        if self.preset_path is not None:
+            preset_frame = self._read_preset_frame()
+            if preset_frame is None:
+                self._update_sidebar()
+                return
+            raw_frame = preset_frame
+
         if self.is_frozen:
             if self.frozen_frame is None:
-                self.frozen_frame = frame_data.copy()
+                self.frozen_frame = raw_frame.copy()
             raw_frame = self.frozen_frame
 
         frame = self._transform_camera_frame(raw_frame)
@@ -262,9 +323,16 @@ class VisionContainer(BoxLayout):
         self._update_sidebar()
 
     def update_keyboard_area(self):
+        if not self.auto_crop:
+            return
+        if not self.frame_buffer:
+            return
         frame = self.frame_buffer[-1]
         mask = identify_keyboard_adaptive_threshold(frame)
         points = find_corners(mask)
+        if not points:
+            return
+        print(points)
         self.cropping_region.set_corners(points)
 
     def _transform_camera_frame(self, frame):
@@ -291,7 +359,16 @@ class VisionContainer(BoxLayout):
         frame = frame.copy()
 
         out_w, out_h = self.cropping_region.output_size
-        if out_w > 0 and out_h > 0 and self.detected_notes:
+        if self.preset_path is not None and self.detected_notes:
+            key_positions = guess_key_positions((frame.shape[1], frame.shape[0]))
+            for note_str in self.detected_notes:
+                code = get_note_code(note_str)
+                if code in key_positions:
+                    x, y, w, h = key_positions[code]
+                    overlay = frame.copy()
+                    cv2.rectangle(overlay, (x, y), (x + w, y + h), (0, 0, 255), -1)
+                    frame = cv2.addWeighted(overlay, 0.75, frame, 0.25, 0)
+        elif out_w > 0 and out_h > 0 and self.detected_notes:
             mask = np.zeros((out_h, out_w, 3), dtype=np.uint8)
             key_positions = guess_key_positions((out_w, out_h))
             
@@ -307,7 +384,8 @@ class VisionContainer(BoxLayout):
                 active = warped_mask > 0
                 frame[active] = (frame[active] * (1 - alpha) + warped_mask[active] * alpha).astype(np.uint8)
 
-        self.cropping_region.draw_outline(frame)
+        if self.preset_path is None:
+            self.cropping_region.draw_outline(frame)
         
         self.image_view.update_image(frame)
 
@@ -356,17 +434,184 @@ class VisionContainer(BoxLayout):
             self.frozen_frame = None
             self.freeze_button.text = "Freeze image"
             self.status_text = "Image live"
+
+    def _preset_options(self):
+        PRESETS_DIR.mkdir(exist_ok=True)
+        self.preset_options = [
+            str(path.relative_to(PRESETS_DIR))
+            for path in sorted(PRESETS_DIR.rglob("*.mp4"))
+        ]
+        options = [CAMERA_PRESET_OPTION, ALL_PRESETS_OPTION]
+        options.extend(self.preset_options)
+        return options
+
+    def _on_preset_select(self, val):
+        if val == ALL_PRESETS_OPTION:
+            self._start_preset_playlist()
+            return
+
+        self.loop_all_presets = False
+        self.preset_playlist = []
+        self.preset_playlist_index = 0
+        self._open_preset(val)
+
+    def _open_preset(self, val):
+        if self.preset_capture is not None:
+            self.preset_capture.release()
+            self.preset_capture = None
+
+        self.frame_buffer.clear()
+        self.detected_notes = []
+        self.previous_notes = set()
+        self.last_preset_frame = None
+        self.is_frozen = False
+        self.frozen_frame = None
+        self.freeze_button.text = "Freeze image"
+
+        if not val or val == CAMERA_PRESET_OPTION:
+            self.preset_path = None
+            self.preset_paused = False
+            self.pause_preset_button.text = "Pause"
+            self.status_text = "Image live"
+            return
+
+        path = PRESETS_DIR / val
+        capture = cv2.VideoCapture(str(path))
+        if not capture.isOpened():
+            self.preset_path = None
+            self.status_text = f"Could not load preset {val}"
+            return
+
+        self.preset_path = path
+        self.preset_capture = capture
+        self.preset_paused = False
+        self.pause_preset_button.text = "Pause"
+        self.preset_dropdown.text = val
+        self.status_text = f"Preset loaded: {val}"
+
+    def _on_refresh_presets(self, *_):
+        self.refresh_presets()
+
+    def refresh_presets(self):
+        options = self._preset_options()
+        dropdown = self.preset_dropdown.dropdown
+        dropdown.clear_widgets()
+        for option in options:
+            item = Button(text=option, size_hint_y=None, height=36)
+            item.bind(on_release=lambda btn: dropdown.select(btn.text))
+            dropdown.add_widget(item)
+
+        if self.preset_dropdown.text not in options:
+            self.preset_dropdown.text = CAMERA_PRESET_OPTION
+            self._on_preset_select(CAMERA_PRESET_OPTION)
+        elif self.loop_all_presets:
+            current = self._current_preset_name()
+            self.preset_playlist = self.preset_options.copy()
+            if current in self.preset_playlist:
+                self.preset_playlist_index = self.preset_playlist.index(current)
+
+    def _start_preset_playlist(self, *_):
+        self._preset_options()
+        if not self.preset_options:
+            self.status_text = "No presets found"
+            self.preset_dropdown.text = ALL_PRESETS_OPTION
+            return
+
+        current = (
+            str(self.preset_path.relative_to(PRESETS_DIR))
+            if self.preset_path is not None and self.preset_path.is_relative_to(PRESETS_DIR)
+            else None
+        )
+        self.preset_playlist = self.preset_options.copy()
+        self.preset_playlist_index = self.preset_playlist.index(current) if current in self.preset_playlist else 0
+        self.loop_all_presets = True
+        self.preset_dropdown.text = ALL_PRESETS_OPTION
+        self._open_preset(self.preset_playlist[self.preset_playlist_index])
+        self.preset_dropdown.text = ALL_PRESETS_OPTION
+        self.status_text = f"Looping all presets: {self.preset_playlist[self.preset_playlist_index]}"
+
+    def _loop_all_presets(self, *_):
+        self._start_preset_playlist()
+
+    def _toggle_preset_pause(self, *_):
+        if self.preset_path is None:
+            return
+        self.preset_paused = not self.preset_paused
+        self.pause_preset_button.text = "Resume" if self.preset_paused else "Pause"
+        state = "Paused" if self.preset_paused else "Playing"
+        name = self._current_preset_name()
+        self.status_text = f"{state}: {name}"
+
+    def _next_preset(self, *_):
+        if self.loop_all_presets:
+            self._advance_preset_playlist()
+            return
+
+        self._preset_options()
+        if not self.preset_options:
+            self.status_text = "No presets found"
+            return
+
+        current = self._current_preset_name()
+        if current in self.preset_options:
+            index = (self.preset_options.index(current) + 1) % len(self.preset_options)
+        else:
+            index = 0
+        self._open_preset(self.preset_options[index])
+
+    def _advance_preset_playlist(self):
+        if not self.preset_playlist:
+            self._start_preset_playlist()
+            return
+
+        self.preset_playlist_index = (self.preset_playlist_index + 1) % len(self.preset_playlist)
+        self._open_preset(self.preset_playlist[self.preset_playlist_index])
+        self.preset_dropdown.text = ALL_PRESETS_OPTION
+        self.status_text = f"Looping all presets: {self.preset_playlist[self.preset_playlist_index]}"
+
+    def _current_preset_name(self):
+        if self.preset_path is None:
+            return CAMERA_PRESET_OPTION
+        try:
+            return str(self.preset_path.relative_to(PRESETS_DIR))
+        except ValueError:
+            return str(self.preset_path)
+
+    def _read_preset_frame(self):
+        if self.preset_capture is None:
+            return None
+
+        if self.preset_paused and self.last_preset_frame is not None:
+            return self.last_preset_frame.copy()
+
+        ret, frame = self.preset_capture.read()
+        if not ret:
+            if self.loop_all_presets:
+                self._advance_preset_playlist()
+            else:
+                self.preset_capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ret, frame = self.preset_capture.read()
+
+        if not ret:
+            self.status_text = "Preset has no readable frames"
+            return None
+
+        self.last_preset_frame = frame.copy()
+        return frame
     
     def _test_model(self):
         if len(self.frame_buffer) < 3:
             self.status_text = f"Waiting for frames ({len(self.frame_buffer)}/3)"
             return
         
-        frames = []
-        for frame in self.frame_buffer:
-            frame = self.cropping_region.apply(frame)
-            if frame is not None:
-                frames.append(frame)
+        if self.preset_path is not None:
+            frames = list(self.frame_buffer)
+        else:
+            frames = []
+            for frame in self.frame_buffer:
+                frame = self.cropping_region.apply(frame)
+                if frame is not None:
+                    frames.append(frame)
         if len(frames) < 3:
             self.status_text = "Select or load a valid crop region"
             return
@@ -436,7 +681,9 @@ class VisionContainer(BoxLayout):
 
 
     def on_stop(self):
-        pass
+        if self.preset_capture is not None:
+            self.preset_capture.release()
+            self.preset_capture = None
 
 
 def run_vision(model_path: str, camera: str):

@@ -17,7 +17,7 @@ from cv2.typing import MatLike
 import mido
 
 from project.crop import CroppingRegion, labelled_checkbox, text_input
-from project.dataset import build_dataset
+from project.dataset import EXPECTED_IMAGE_SIZE, build_dataset
 from project.model import run_training
 
 # Disable Kivy's argument parser to avoid conflicts with our own argparse
@@ -45,6 +45,7 @@ from project.image_view import ImageView
 logging.getLogger('PIL').setLevel(logging.WARNING)
 
 LAST_SKEW_CONFIG_PATH = Path("frames") / "last_skew.json"
+PRESETS_DIR = Path("presets")
 NONE_SAVE_PROBABILITY = 0.15
 
 
@@ -118,6 +119,14 @@ def finger_index_options() -> list[str]:
         fingers = [str(idx + 1) for idx in range(5) if mask & (1 << idx)]
         options.append("-".join(fingers))
     return options
+
+
+def format_seconds_for_filename(seconds: float) -> str:
+    if seconds <= 0:
+        seconds = 1.0
+    if seconds.is_integer():
+        return str(int(seconds))
+    return f"{seconds:.2f}".rstrip("0").rstrip(".")
 
 
 class DetailsPopup(Popup):
@@ -487,7 +496,9 @@ class RecordingContainer(BoxLayout):
         else:
             self.midi_listener = None
         self.frame_n = 0
-        self.frame_buffer = deque(maxlen=30)
+        self.frame_buffer = deque(maxlen=300)
+        self.preset_recording_frames: list[Frame] = []
+        self.preset_recording_started_at: datetime.datetime | None = None
         self.scheduled_save = None
         self.pending_notes = []
         self.recording_enabled = False
@@ -507,10 +518,14 @@ class RecordingContainer(BoxLayout):
 
     def build(self, initial_frame: MatLike | None):
         os.makedirs("frames", exist_ok=True)
+        PRESETS_DIR.mkdir(exist_ok=True)
 
         layout = BoxLayout(orientation='horizontal')
 
-        self.image_view = ImageView(size_hint=(0.7, 1.0))
+        preset_panel = BoxLayout(orientation='vertical', size_hint=(0.2, 1.0), padding=(0, 0, 5, 0), spacing=6)
+        layout.add_widget(preset_panel)
+
+        self.image_view = ImageView(size_hint=(0.5, 1.0))
         layout.add_widget(self.image_view.build())
 
         sidebar = BoxLayout(orientation='vertical', size_hint=(0.3, 1.0))
@@ -590,6 +605,47 @@ class RecordingContainer(BoxLayout):
         recording_buttons.add_widget(self.record_single_button)
         sidebar.add_widget(recording_buttons)
 
+        preset_buttons = BoxLayout(orientation='vertical', size_hint_y=None, height=88, spacing=4)
+        self.start_preset_button = Button(
+            text="Start preset recording",
+            size_hint_y=None,
+            height=42,
+        )
+        self.start_preset_button.bind(on_release=self._start_preset_recording)
+        preset_buttons.add_widget(self.start_preset_button)
+
+        self.end_preset_button = Button(
+            text="End recording",
+            size_hint_y=None,
+            height=42,
+            disabled=True,
+        )
+        self.end_preset_button.bind(on_release=self._end_preset_recording)
+        preset_buttons.add_widget(self.end_preset_button)
+        preset_panel.add_widget(preset_buttons)
+
+        preset_status_layout = BoxLayout(orientation='vertical', size_hint_y=None, height=82, spacing=4)
+        self.discard_preset_button = Button(
+            text="Discard preset",
+            size_hint_y=None,
+            height=38,
+            disabled=True,
+        )
+        self.discard_preset_button.bind(on_release=self._discard_preset_recording)
+        preset_status_layout.add_widget(self.discard_preset_button)
+
+        self.preset_status_label = Label(
+            text="Preset: idle",
+            size_hint_y=None,
+            height=36,
+            halign="left",
+            valign="middle",
+            padding=(8, 0),
+        )
+        self.preset_status_label.bind(size=self.preset_status_label.setter('text_size'))
+        preset_status_layout.add_widget(self.preset_status_label)
+        preset_panel.add_widget(preset_status_layout)
+
         self.replace_button = Button(
             text="Replace: ON",
             size_hint_y=None,
@@ -626,7 +682,7 @@ class RecordingContainer(BoxLayout):
         sidebar.add_widget(self.fingers_dropdown.parent)
 
         self.saved_counter_label = Label(
-            text="Saved images: 0",
+            text="Saved items: 0",
             size_hint_y=None,
             height=32,
             halign='left',
@@ -644,7 +700,7 @@ class RecordingContainer(BoxLayout):
         sidebar.add_widget(self.undo_button)
 
         self.recent_saved_label = Label(
-            text="Last 10 dataset items:\nNo items saved in this session.",
+            text="Last 10 saved items:\nNo items saved in this session.",
             valign='top',
             halign='left',
             padding=(10, 5),
@@ -693,6 +749,11 @@ class RecordingContainer(BoxLayout):
         if self.midi_listener:
             self.midi_listener.update()
             frame.notes.update(self.midi_listener.pressed(t))
+
+        if self.preset_recording_started_at is not None:
+            self.preset_recording_frames.append(
+                Frame(data=frame.data.copy(), time=frame.time, notes=frame.notes.copy())
+            )
 
         time = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-5]
         # print(f"{time} Frame {self.frame_n} ({len(self.frame_buffer)} fps), just pressed: {self.midi_listener.just_pressed()}, just released: {self.midi_listener.just_released()}")
@@ -910,8 +971,9 @@ class RecordingContainer(BoxLayout):
         self._save_last_skew_if_changed()
 
     def _update_sidebar(self):
-        self.saved_counter_label.text = f"Saved images: {self.saved_items}"
+        self.saved_counter_label.text = f"Saved items: {self.saved_items}"
         self._update_recent_saved_label()
+        self._update_preset_status()
 
         if not self.pending_notes:
             self.captured_label.text = "Captured: "
@@ -940,6 +1002,119 @@ class RecordingContainer(BoxLayout):
         self.save_frame(0, none_save_probability=1.0)
         self.recording_enabled = v
 
+    def _start_preset_recording(self, *_):
+        self.preset_recording_frames.clear()
+        self.preset_recording_started_at = datetime.datetime.now()
+        self.start_preset_button.disabled = True
+        self.end_preset_button.disabled = False
+        self.discard_preset_button.disabled = False
+        self._update_preset_status()
+        print("Started preset recording.")
+
+    def _end_preset_recording(self, *_):
+        if self.preset_recording_started_at is None:
+            return
+        source_frames = self.preset_recording_frames.copy()
+        self.preset_recording_started_at = None
+        self.preset_recording_frames.clear()
+        self.start_preset_button.disabled = False
+        self.end_preset_button.disabled = True
+        self.discard_preset_button.disabled = True
+        self._save_preset_recording(source_frames)
+        self._update_preset_status()
+
+    def _discard_preset_recording(self, *_):
+        count = len(self.preset_recording_frames)
+        self.preset_recording_started_at = None
+        self.preset_recording_frames.clear()
+        self.start_preset_button.disabled = False
+        self.end_preset_button.disabled = True
+        self.discard_preset_button.disabled = True
+        self._update_preset_status("Preset: discarded")
+        print(f"Discarded preset recording ({count} frames).")
+
+    def _update_preset_status(self, text: str | None = None):
+        if not hasattr(self, "preset_status_label"):
+            return
+
+        if text is not None:
+            self.preset_status_label.text = text
+            return
+
+        if self.preset_recording_started_at is None:
+            self.preset_status_label.text = "Preset: idle"
+            return
+
+        elapsed = (datetime.datetime.now() - self.preset_recording_started_at).total_seconds()
+        self.preset_status_label.text = (
+            f"Preset: rec {format_seconds_for_filename(elapsed)}s "
+            f"({len(self.preset_recording_frames)} frames)"
+        )
+
+    def _save_preset_recording(self, source_frames: list[Frame]):
+        if len(source_frames) < 2:
+            print("Not enough frames available to save a preset.")
+            return
+
+        duration = max(
+            0.25,
+            (source_frames[-1].time - source_frames[0].time).total_seconds(),
+        )
+        video_frames = []
+        for frame in source_frames:
+            cropped = self._transform_frame(frame.data)
+            if cropped is None:
+                continue
+            target_w, target_h = EXPECTED_IMAGE_SIZE
+            if cropped.shape[1] != target_w or cropped.shape[0] != target_h:
+                cropped = cv2.resize(cropped, (target_w, target_h))
+            if len(cropped.shape) == 2:
+                cropped = cv2.cvtColor(cropped, cv2.COLOR_GRAY2BGR)
+            video_frames.append(cropped)
+
+        if len(video_frames) < 2:
+            print("Select or load a valid crop region before saving a preset.")
+            return
+
+        recorded_notes = {
+            note.name
+            for frame in source_frames
+            for note in frame.notes
+        }
+        notes = sorted(recorded_notes)
+        notes_str = "_".join(notes) if notes else "none"
+        pressed_keys = (
+            len(notes)
+            if self.selected_pressed_keys == "auto"
+            else int(self.selected_pressed_keys)
+        )
+        duration_str = format_seconds_for_filename(duration)
+        path = PRESETS_DIR / self.selected_hand / str(pressed_keys) / self.selected_fingers / f"{notes_str}_{duration_str}.mp4"
+        path = self._resolve_preset_path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        fps = max(1.0, len(video_frames) / duration)
+        height, width = video_frames[0].shape[:2]
+        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+        if not writer.isOpened():
+            print(f"Could not create preset video at {path}")
+            return
+
+        for frame in video_frames:
+            writer.write(frame)
+        writer.release()
+
+        self.saved_items += 1
+        self.saved_history.append({
+            "label": (
+                f"preset {self.selected_hand}/{pressed_keys}/"
+                f"{self.selected_fingers}/{notes_str} ({duration_str}s)"
+            ),
+            "paths": [path],
+        })
+        self._save_last_skew_if_changed()
+        print(f"Saved preset to {path}")
+
     def _resolve_save_path(self, filepath: Path) -> Path:
         prefix = 0
         while True:
@@ -947,6 +1122,11 @@ class RecordingContainer(BoxLayout):
             if not candidate.exists():
                 return candidate
             prefix += 1
+
+    def _resolve_preset_path(self, filepath: Path) -> Path:
+        if not filepath.exists():
+            return filepath
+        return self._resolve_save_path(filepath)
 
     def _undo_last_save(self, *_):
         if not self.saved_history:
@@ -965,11 +1145,11 @@ class RecordingContainer(BoxLayout):
 
         self.saved_items = max(0, self.saved_items - 1)
         self._update_recent_saved_label()
-        self.saved_counter_label.text = f"Saved images: {self.saved_items}"
+        self.saved_counter_label.text = f"Saved items: {self.saved_items}"
         print(f"Undid {item['label']} ({removed} files removed).")
 
     def _update_recent_saved_label(self):
-        lines = ["Last 10 dataset items:"]
+        lines = ["Last 10 saved items:"]
         if not self.saved_history:
             lines.append("No items saved in this session.")
         else:
@@ -1108,6 +1288,7 @@ class UnifiedApp(App):
         if self.btn_record.state == 'down':
             self.content_layout.add_widget(self.recording_container)
         else:
+            self.vision_container.refresh_presets()
             self.content_layout.add_widget(self.vision_container)
 
     def update(self, dt):

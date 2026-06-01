@@ -75,3 +75,19 @@ python -c "import glob, os, PIL.Image; [os.remove(f) for f in glob.glob('**/*.pn
 
 {left_hand | right_hand}/{num_pressed_keys}/{fingers_index[list[1-5]]}/{Note}{Octave[1-5]}_{frame[0-3]}.png
 
+## Presets
+
+Presets are recorded from the recording screen with `Start preset recording`, saved
+with `End recording`, and can be abandoned with `Discard preset`. They are stored in
+the `presets` folder as looping videos. Their path follows the same structure as
+frames, but the final number is the preset duration in seconds instead of a frame
+index:
+
+```text
+presets/{left_hand | right_hand}/{num_pressed_keys}/{fingers_index[list[1-5]]}/{Note}{Octave[1-5]}_{duration_seconds}.mp4
+```
+
+On the testing screen, use the preset dropdown to switch between the live camera,
+individual saved preset videos, or `All presets`. The player controls can pause the
+selected preset or skip to the next preset.
+
