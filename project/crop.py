@@ -183,6 +183,14 @@ class CroppingRegion:
             
         inputs[self._point_idx].text = self._format_point((x, y))
         self._point_idx = (self._point_idx + 1) % len(inputs)
+    
+    def set_corners(self, points: list[tuple[int, int]]):
+        br, bl, tl, tr = points
+
+        if self.is_rect:
+            self.rect_points = (tl, br)
+        else:
+            self.skew_points = (tl, tr, bl, br)
 
     def on_adjust_size(self, *args):
         target_w, target_h = self.desired_size

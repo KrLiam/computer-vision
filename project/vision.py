@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 from cv2.typing import MatLike
 
+from project.area import find_corners, identify_keyboard_adaptive_threshold
 from project.crop import CroppingRegion
 from project.dataset import frames_to_tensor
 from project.midi import format_note, get_note_code, guess_key_positions
@@ -208,6 +209,8 @@ class VisionContainer(BoxLayout):
         sidebar.add_widget(self.log_label)
         self.add_widget(sidebar)
 
+        Clock.schedule_interval(self.update_keyboard_area, 0.5)
+
     def _read_last_skew_config(self):
         if not LAST_SKEW_CONFIG_PATH.exists():
             return None
@@ -257,6 +260,12 @@ class VisionContainer(BoxLayout):
         self._update_camera_view(frame)
         self._test_model()
         self._update_sidebar()
+
+    def update_keyboard_area(self):
+        frame = self.frame_buffer[-1]
+        mask = identify_keyboard_adaptive_threshold(frame)
+        points = find_corners(mask)
+        self.cropping_region.set_corners(points)
 
     def _transform_camera_frame(self, frame):
         frame = frame.copy()

@@ -40,7 +40,13 @@ def show(
 
     for r, row in enumerate(processed_rows):
         for c, (img, title) in enumerate(row):
-            ax = axes[r, c]
+            if num_rows == 1 and max_cols == 1:
+                ax = axes
+            elif num_rows > 1 and max_cols > 1:
+                ax = axes[r, c]
+            else:
+                ax = axes[max(r, c)]
+
             cmap = 'gray' if len(img.shape) == 2 else None
             ax.imshow(img, cmap=cmap)
             ax.set_title(title)
@@ -78,6 +84,78 @@ class PerfCounter:
         delta = (perf_counter() - self.time) * 1000
         print(f"{self.label}: {delta:.3f}ms")
 
+def apply_hough_lines(image: MatLike, direction: str = "all", debug: bool = False) -> MatLike:
+    """
+    Finds lines in the image using Hough Transform.
+    `direction` can be "all", "horizontal", or "vertical".
+    """
+    edges = apply_canny(image)
+    
+    # Fechamento das brechas entre teclas brancas
+    kernel = np.ones((10, 1), np.uint8)
+    edges = cv2.morphologyEx(edges, cv2.MORPH_OPEN, kernel)
+
+    # Fechamento das brechas entre teclas brancas
+    kernel = np.ones((3, 3), np.uint8)
+    edges = cv2.morphologyEx(edges, cv2.MORPH_DILATE, kernel)
+
+    # Utiliza Probabilistic Hough Transform para encontrar as linhas
+    lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi/180, threshold=50, minLineLength=320, maxLineGap=320)
+
+    if lines is None:
+        return []
+    
+    horizontal = []
+    vertical = []
+    diagonal = []
+    
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        
+        # Calculate the angle of the line in degrees (mapped to [0, 180))
+        angle = np.degrees(np.arctan2(y2 - y1, x2 - x1))
+        angle = (angle + 180) % 180
+        
+        is_horizontal = angle <= 15 or angle >= 165
+        is_vertical = 75 <= angle <= 105
+        
+        # Color-code the lines based on their direction
+        if is_horizontal:
+            horizontal.append(line[0])
+        elif is_vertical:
+            vertical.append(line[0])
+        else:
+            diagonal.append(line[0])
+    
+    if debug:
+        result_img = image.copy()
+
+        for line in horizontal:
+            x1, y1, x2, y2 = line
+            cv2.line(result_img, (x1, y1), (x2, y2), (255, 0, 0), 2)
+        for line in vertical:
+            x1, y1, x2, y2 = line
+            cv2.line(result_img, (x1, y1), (x2, y2), (0, 255, 0), 2) 
+        for line in diagonal:
+            x1, y1, x2, y2 = line
+            cv2.line(result_img, (x1, y1), (x2, y2), (0, 0, 255), 2) 
+
+        show(
+            (
+                (image, "Original"),
+                (edges, "Canny Edges"),
+                (result_img, "Hough Lines")
+            ),
+        )
+    
+    if direction == "horizontal":
+        return horizontal
+    elif direction == "vertical":
+        return vertical
+    elif direction == "diagonal":
+        return diagonal
+    return horizontal + vertical + diagonal
+
 def identify_keyboard_adaptive_threshold(
     image: MatLike,
     save_path: str | None = None,
@@ -104,19 +182,31 @@ def identify_keyboard_adaptive_threshold(
         kernel = np.ones((1, 7), np.uint8)
         binary_closed = cv2.morphologyEx(binary_opened, cv2.MORPH_CLOSE, kernel)
 
+
+        lines = apply_hough_lines(binary_closed, direction="horizontal")
+        line_centers = []
+        for line in lines:
+            x1, y1, x2, y2 = line
+            line_centers.append((int((x1 + x2) // 2), int((y1 + y2) // 2)))
+
+        contours, _ = cv2.findContours(binary_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         # Analisa contornos com proporção maior que 3:1
         # Considera o contorno com maior área
-        contours, _ = cv2.findContours(binary_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         countour_areas = []
         for cnt in contours:
-            _, _, w, h = cv2.boundingRect(cnt)
+            x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = float(w) / h
 
-            if aspect_ratio < 3:
-                continue
+            line_count = 0
+            for center in line_centers:
+                if cv2.pointPolygonTest(cnt, tuple(center), False) >= 0:
+                    line_count += 1
 
             area = cv2.contourArea(cnt)
-            countour_areas.append((area, cnt))
+
+            score = area * line_count * aspect_ratio
+            countour_areas.append((score, cnt))
+
         countour_areas.sort(key=lambda el: -el[0])
 
         selected_component = np.zeros_like(binary_closed)
@@ -200,7 +290,17 @@ def identify_keyboard_adaptive_threshold(
             save_path=save_path,
         )
 
-    return cropped_keyboard
+    return final_mask
+
+def find_corners(image: MatLike):
+    contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    
+    cnt = contours[0]
+    rect = cv2.minAreaRect(cnt)
+    box = cv2.boxPoints(rect)
+    return [tuple(round(v) for v in b) for b in list(box)]
 
 def debug_keyboard(input: str, save_images: bool = False, plot: bool = False):
     for path in glob.glob(input, recursive=True):
@@ -212,8 +312,10 @@ def debug_keyboard(input: str, save_images: bool = False, plot: bool = False):
             output = None
             plot = True
         
-        identify_keyboard_adaptive_threshold(
+        # apply_hough_lines(img)
+        mask = identify_keyboard_adaptive_threshold(
             img,
             save_path=output,
             plot=plot,
         )
+        box = find_corners(mask)
