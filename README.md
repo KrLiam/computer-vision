@@ -57,7 +57,7 @@ python -m project dataset record --midi-name "CASIO" --camera "0"
 
 python -m project dataset build --images "frames/**/*.png" --output teste.pt
 
-python -m project train --train-dataset teste.pt --test-dataset teste.pt
+python -m project train --train-dataset datasets/train_junho.tar --test-dataset datasets/test_junho.tar --model models/model_junho.pth --epochs 20
 
 python -m project crop --path frames/**/*.png
 

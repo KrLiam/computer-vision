@@ -130,7 +130,11 @@ class MidiListener:
 
         for msg in self.midi_log:
             pressed = msg.type == "note_on"
-            note = msg.note
+
+            try:
+                note = msg.note
+            except AttributeError:
+                continue
 
             if pressed:
                 pressed_notes.add(Note(note))

@@ -176,16 +176,73 @@ def split_dataset_samples(
         raise ValueError("test_ratio must be between 0 and 1")
 
     keys = list(samples.keys())
-    random.Random(seed).shuffle(keys)
+    rng = random.Random(seed)
+    rng.shuffle(keys)
 
     test_count = round(len(keys) * test_ratio)
     if len(keys) > 1:
         test_count = min(max(1, test_count), len(keys) - 1)
 
-    test_keys = set(keys[:test_count])
+    labels_by_key = {key: _sample_split_labels(key) for key in keys}
+    label_totals = defaultdict(int)
+    for labels in labels_by_key.values():
+        for label in labels:
+            label_totals[label] += 1
+
+    desired_test_totals = {
+        label: total * test_ratio
+        for label, total in label_totals.items()
+    }
+    test_label_totals = defaultdict(int)
+    remaining_keys = keys.copy()
+    test_keys = set()
+
+    while remaining_keys and len(test_keys) < test_count:
+        best_key = max(
+            remaining_keys,
+            key=lambda key: _split_balance_score(
+                labels_by_key[key],
+                label_totals,
+                desired_test_totals,
+                test_label_totals,
+            ),
+        )
+        test_keys.add(best_key)
+        remaining_keys.remove(best_key)
+
+        for label in labels_by_key[best_key]:
+            test_label_totals[label] += 1
+
     train_samples = {key: samples[key] for key in keys if key not in test_keys}
     test_samples = {key: samples[key] for key in keys if key in test_keys}
     return train_samples, test_samples
+
+
+def _sample_split_labels(key: str) -> tuple[str, ...]:
+    labels = tuple(note for note in _sample_notes(key) if get_note_code(note) is not None)
+    return labels or ("__none__",)
+
+
+def _split_balance_score(
+    labels: tuple[str, ...],
+    label_totals: dict[str, int],
+    desired_test_totals: dict[str, float],
+    test_label_totals: dict[str, int],
+) -> tuple[float, float]:
+    score = 0.0
+    rarity = 0.0
+
+    for label in labels:
+        total = label_totals[label]
+        desired = desired_test_totals[label]
+        current = test_label_totals[label]
+
+        before_error = abs(current - desired)
+        after_error = abs(current + 1 - desired)
+        score += (before_error - after_error) / total
+        rarity += 1 / total
+
+    return score, rarity
 
 
 def _sample_notes(key: str) -> tuple[str, ...]:
@@ -358,7 +415,7 @@ def load_dataset(path: str = "dataset.tar", batch_size: int = 32, shuffle: bool 
         pin_memory=True
     )
 
-def dataset_info(path: str, first_note: int = 36):
+def dataset_info(path: str, first_note: int = 36, sort: bool = False):
     loader = load_dataset(path, shuffle=False)
     dataset = loader.dataset
 
@@ -375,10 +432,15 @@ def dataset_info(path: str, first_note: int = 36):
             y = torch.tensor(item['y'])
             for note in tensor_to_notes(y, first_note):
                 distribution[note] += 1
-
-        for i in range(len(sample_y)):
-            note_code = i + first_note
-            print(f"{format_note(note_code)}: {distribution[note_code]}")
+        
+        if sort:
+            distribution = dict(sorted(distribution.items(), key=lambda x: x[1], reverse=True))
+            for note_code, count in distribution.items():
+                print(f"{format_note(note_code)}: {count}")
+        else:
+            for i in range(len(sample_y)):
+                note_code = i + first_note
+                print(f"{format_note(note_code)}: {distribution[note_code]}")
     else:
         x_tensors, y_tensors = dataset.tensors
         print(f"X Shape: {tuple(x_tensors[0].shape)}")

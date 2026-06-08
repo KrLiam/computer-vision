@@ -160,7 +160,12 @@ def parse_args():
         default="dataset.tar",
         help="Path to the dataset '.tar' or '.pt' file",
     )
-
+    dataset_info_parser.add_argument(
+        "--sort",
+        action="store_true",
+        default=False,
+        help="Sort the note distribution by frequency",
+    )
     # Test command
     test_parser = subparsers.add_parser("test", help="Run model inference on a random test sample")
     test_parser.add_argument(

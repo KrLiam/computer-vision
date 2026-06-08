@@ -33,19 +33,17 @@ def run():
                             test_output_path=args.test_output,
                             test_ratio=args.test_ratio,
                             seed=args.split_seed,
-                            all_frames=args.all_frames,
                             cap_none=args.cap_none,
                         )
                     else:
                         build_dataset(
                             args.images,
                             args.output,
-                            all_frames=args.all_frames,
                             cap_none=args.cap_none,
                             seed=args.split_seed,
                         )
                 case "info":
-                    dataset_info(args.path)
+                    dataset_info(args.path, sort=args.sort)
                 case "record":
                     from project.record import run_recording
                     run_recording(args.midi_name, args.camera)
