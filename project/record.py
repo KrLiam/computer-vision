@@ -581,20 +581,23 @@ class RecordingContainer(BoxLayout):
         reset_camera_button.bind(on_release=self._reset_camera_params)
         sidebar.add_widget(reset_camera_button)
 
-        self.perturb_save_cb = labelled_checkbox("Perturb save:")
+        self.perturb_save_cb = labelled_checkbox("Perturb save:", active=True)
         sidebar.add_widget(self.perturb_save_cb.parent)
 
-        self.brightness_delta_input = text_input("Brightness +/-:", default="35")
+        self.brightness_delta_input = text_input("Brightness +/-:", default="30")
         sidebar.add_widget(self.brightness_delta_input.parent)
 
-        self.exposure_delta_input = text_input("Exposure +/-:", default="0.6")
+        self.exposure_delta_input = text_input("Exposure +/-:", default="0.2")
         sidebar.add_widget(self.exposure_delta_input.parent)
 
         self.contrast_delta_input = text_input("Contrast +/-:", default="0.25")
         sidebar.add_widget(self.contrast_delta_input.parent)
 
-        self.perspective_delta_input = text_input("Perspective px:", default="10")
+        self.perspective_delta_input = text_input("Perspective px:", default="2")
         sidebar.add_widget(self.perspective_delta_input.parent)
+
+        self.crop_offset_input = text_input("Crop offset px:", default="5")
+        sidebar.add_widget(self.crop_offset_input.parent)
 
         recording_buttons = BoxLayout(orientation='horizontal', size_hint_min_y=43)
         self.recording_button = Button(
@@ -816,14 +819,25 @@ class RecordingContainer(BoxLayout):
             
         return frame
     
-    def _transform_frame(self, frame, outline: bool = False):
+    def _transform_frame(
+        self,
+        frame,
+        outline: bool = False,
+        padding: int = 10,
+        offset: tuple[int, int] = (0, 0),
+    ):
         frame = self._transform_frame_color(frame)
         frame = self._transform_frame_flip(frame)
             
         if outline:
             self.cropping_region.draw_outline(frame)
         else:
-            frame = self.cropping_region.apply(frame)
+            frame = self.cropping_region.apply(
+                frame,
+                target_size=EXPECTED_IMAGE_SIZE,
+                padding=padding,
+                offset=offset,
+            )
 
         return frame
 
@@ -869,9 +883,11 @@ class RecordingContainer(BoxLayout):
             "exposure": max(0.0, self._float_input(self.exposure_delta_input)),
             "contrast": max(0.0, self._float_input(self.contrast_delta_input)),
             "perspective": max(0.0, self._float_input(self.perspective_delta_input)),
+            "offset": max(0.0, self._float_input(self.crop_offset_input)),
         }
 
     def _random_perturbation(self, config: dict[str, float]) -> dict[str, float | np.ndarray]:
+        offset = config["offset"]
         perspective_delta = config["perspective"]
         corner_offsets = np.random.uniform(
             -perspective_delta,
@@ -884,6 +900,10 @@ class RecordingContainer(BoxLayout):
             "exposure": np.random.uniform(-config["exposure"], config["exposure"]),
             "contrast": np.random.uniform(-config["contrast"], config["contrast"]),
             "corner_offsets": corner_offsets,
+            "offset": (
+                int(np.random.uniform(-offset, offset)),
+                int(np.random.uniform(-offset, offset))
+            )
         }
 
     def _apply_perturbation(self, frame: MatLike, params: dict[str, float | np.ndarray]) -> MatLike:
@@ -941,10 +961,17 @@ class RecordingContainer(BoxLayout):
             else int(self.selected_pressed_keys)
         )
         saved_paths = []
+
+        config = self._perturbation_config()
+        params = self._random_perturbation(config)
+
         cropped_frames = []
         for i in range(3):
             frame_idx = index + 2 - i
-            cropped = self._transform_frame(self.frame_buffer[frame_idx].data)
+            cropped = self._transform_frame(
+                self.frame_buffer[frame_idx].data,
+                offset=params["offset"],
+            )
             if cropped is None:
                 continue
             cropped_frames.append((i, frame_idx, cropped))
@@ -954,7 +981,6 @@ class RecordingContainer(BoxLayout):
 
         variants: list[tuple[str | None, list[tuple[int, int, MatLike]]]] = [(None, cropped_frames)]
         if self.perturb_save_cb.active:
-            config = self._perturbation_config()
             variants = []
             for variant_idx in range(3):
                 params = self._random_perturbation(config)

@@ -8,7 +8,7 @@ copia-frames
 ignored*
 models
 datasets
-frames
+frames*
 frames.7z
 frames/right_hand
 frames/left_hand

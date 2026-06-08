@@ -10,7 +10,7 @@ from cv2.typing import MatLike
 
 from project.area import find_corners, identify_keyboard_adaptive_threshold
 from project.crop import CroppingRegion
-from project.dataset import frames_to_tensor
+from project.dataset import EXPECTED_IMAGE_SIZE, frames_to_tensor
 from project.midi import format_note, get_note_code, guess_key_positions
 from project.model import DEVICE, NeuralNetwork, load_model
 from project.record import PRESETS_DIR, labelled_checkbox, labelled_dropdown, text_input
@@ -609,7 +609,7 @@ class VisionContainer(BoxLayout):
         else:
             frames = []
             for frame in self.frame_buffer:
-                frame = self.cropping_region.apply(frame)
+                frame = self.cropping_region.apply(frame, target_size=EXPECTED_IMAGE_SIZE, padding=10)
                 if frame is not None:
                     frames.append(frame)
         if len(frames) < 3:
