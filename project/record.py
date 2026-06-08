@@ -16,6 +16,7 @@ import numpy as np
 from cv2.typing import MatLike
 import mido
 
+from project.area import find_corners, identify_keyboard_adaptive_threshold
 from project.crop import CroppingRegion, labelled_checkbox, text_input
 from project.dataset import EXPECTED_IMAGE_SIZE, build_dataset
 from project.model import run_training
@@ -538,13 +539,21 @@ class RecordingContainer(BoxLayout):
         sidebar.add_widget(self.cropping_region.build())
 
 
-        self.load_skew_button = Button(
-            text="Load last skew",
+        #self.load_skew_button = Button(
+        #    text="Load last skew",
+        #    size_hint_y=None,
+        #    height=38,
+        #)
+        #self.load_skew_button.bind(on_release=self._load_last_skew)
+        #sidebar.add_widget(self.load_skew_button)
+    
+        self.auto_crop_button = Button(
+            text="Auto-crop",
             size_hint_y=None,
             height=38,
         )
-        self.load_skew_button.bind(on_release=self._load_last_skew)
-        sidebar.add_widget(self.load_skew_button)
+        self.auto_crop_button.bind(on_release=lambda _: self.update_keyboard_area())
+        sidebar.add_widget(self.auto_crop_button)
 
         self.flip_x_cb = labelled_checkbox("Flip X:")
         sidebar.add_widget(self.flip_x_cb.parent)
@@ -772,9 +781,21 @@ class RecordingContainer(BoxLayout):
         self._update_camera_view(frame.data)
         self._update_sidebar()
 
-    def _transform_frame(self, frame, outline: bool = False):
-        frame = frame.copy()
+    def update_keyboard_area(self):
+        #if not self.auto_crop:
+        #    return
+        if not self.frame_buffer:
+            return
+        frame = self.frame_buffer[-1]
+        frame = self._transform_frame_flip(frame.data)
+        
+        mask = identify_keyboard_adaptive_threshold(frame)
+        points = find_corners(mask)
+        if not points:
+            return
+        self.cropping_region.set_corners(points)
 
+    def _transform_frame_color(self, frame):
         exposure_scale = 2 ** self.exposure_slider.value
         contrast = self.contrast_slider.value
         brightness = self.brightness_slider.value
@@ -783,12 +804,21 @@ class RecordingContainer(BoxLayout):
         if self.gray_cb.active:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+            
+        return frame
 
+    def _transform_frame_flip(self, frame):
         if self.flip_y_cb.active:
             frame = cv2.flip(frame, 0)
 
         if self.flip_x_cb.active:
             frame = cv2.flip(frame, 1)
+            
+        return frame
+    
+    def _transform_frame(self, frame, outline: bool = False):
+        frame = self._transform_frame_color(frame)
+        frame = self._transform_frame_flip(frame)
             
         if outline:
             self.cropping_region.draw_outline(frame)
