@@ -332,37 +332,142 @@ class CroppingRegion:
                 return out_w, out_h
             return 0, 0
 
-    def apply(self, img: MatLike) -> MatLike:
+    def apply(
+        self,
+        img: MatLike,
+        padding: int = 0,
+        offset: tuple[int, int] = (0, 0),
+        target_size: tuple[int, int] | None = None
+    ) -> MatLike | None:
         if self.is_rect:
             p1, p2 = self.rect_points
 
             if not p1 or not p2:
                 print("Invalid points. Cannot apply crop.")
-                return
+                return None
 
             x1, y1 = min(p1[0], p2[0]), min(p1[1], p2[1])
             x2, y2 = max(p1[0], p2[0]), max(p1[1], p2[1])
 
-            if x1 == x2 or y1 == y2:
-                print("Invalid cropping region area.")
-                return
+            x1 += offset[0]
+            x2 += offset[0]
+            y1 += offset[1]
+            y2 += offset[1]
 
-            h, w, _ = img.shape
-            cx1, cy1 = max(0, x1), max(0, y1)
-            cx2, cy2 = min(w, x2), min(h, y2)
-            return img[cy1:cy2, cx1:cx2]
+            x1 -= padding
+            y1 -= padding
+            x2 += padding
+            y2 += padding
+
+            h, w = img.shape[:2]
+            x1 = max(0, min(w, x1))
+            x2 = max(0, min(w, x2))
+            y1 = max(0, min(h, y1))
+            y2 = max(0, min(h, y2))
+
+            if x1 >= x2 or y1 >= y2:
+                print("Invalid cropping region area.")
+                return None
+
+            if target_size is not None:
+                target_w, target_h = target_size
+                target_ratio = target_w / target_h
+                current_w = x2 - x1
+                current_h = y2 - y1
+                if current_h > 0:
+                    current_ratio = current_w / current_h
+                    factor = current_ratio / target_ratio
+                    new_h = current_h * factor
+                    diff = new_h - current_h
+                    y1 -= diff / 2
+                    y2 += diff / 2
+
+            cy1, cy2 = int(y1), int(y2)
+            cx1, cx2 = int(x1), int(x2)
+            
+            pad_top = max(0, -cy1)
+            pad_bottom = max(0, cy2 - h)
+            pad_left = max(0, -cx1)
+            pad_right = max(0, cx2 - w)
+            
+            cy1_clip, cy2_clip = max(0, cy1), min(h, cy2)
+            cx1_clip, cx2_clip = max(0, cx1), min(w, cx2)
+            
+            if cx1_clip >= cx2_clip or cy1_clip >= cy2_clip:
+                print("Invalid cropping region area after expansion.")
+                return None
+                
+            cropped = img[cy1_clip:cy2_clip, cx1_clip:cx2_clip]
+            if pad_top > 0 or pad_bottom > 0 or pad_left > 0 or pad_right > 0:
+                cropped = cv2.copyMakeBorder(cropped, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+            
+            if target_size is not None:
+                cropped = cv2.resize(cropped, target_size)
+                
+            return cropped
         else:
             tl, tr, bl, br = self.skew_points
 
             if not tl or not tr or not bl or not br:
                 print("Invalid points. Cannot apply crop.")
-                return
+                return None
 
+            tl = (tl[0] + offset[0], tl[1] + offset[1])
+            tr = (tr[0] + offset[0], tr[1] + offset[1])
+            bl = (bl[0] + offset[0], bl[1] + offset[1])
+            br = (br[0] + offset[0], br[1] + offset[1])
+            
+            tl = (tl[0] - padding, tl[1] - padding)
+            tr = (tr[0] + padding, tr[1] - padding)
+            bl = (bl[0] - padding, bl[1] + padding)
+            br = (br[0] + padding, br[1] + padding)
+
+            h_img, w_img = img.shape[:2]
+            def clip(pt):
+                return (max(0, min(w_img, pt[0])), max(0, min(h_img, pt[1])))
+            
+            tl = clip(tl)
+            tr = clip(tr)
+            bl = clip(bl)
+            br = clip(br)
+            
             crop_pts = [tl, tr, br, bl]
             src_pts = np.array(crop_pts, dtype=np.float32)
             
-            out_w, out_h = self.output_size
+            width_top = np.linalg.norm(src_pts[0] - src_pts[1])
+            width_bot = np.linalg.norm(src_pts[3] - src_pts[2])
+            current_w = max(width_top, width_bot)
             
+            height_left = np.linalg.norm(src_pts[0] - src_pts[3])
+            height_right = np.linalg.norm(src_pts[1] - src_pts[2])
+            current_h = max(height_left, height_right)
+            
+            if current_w <= 0 or current_h <= 0:
+                print("Invalid cropping region area.")
+                return None
+
+            if target_size is not None:
+                target_w, target_h = target_size
+                target_ratio = target_w / target_h
+                current_ratio = current_w / current_h
+                factor = current_ratio / target_ratio
+                new_h = current_h * factor
+                diff = new_h - current_h
+                
+                tl = (tl[0], tl[1] - diff / 2)
+                tr = (tr[0], tr[1] - diff / 2)
+                bl = (bl[0], bl[1] + diff / 2)
+                br = (br[0], br[1] + diff / 2)
+                
+                src_pts = np.array([tl, tr, br, bl], dtype=np.float32)
+                out_w, out_h = int(current_w), int(new_h)
+            else:
+                out_w, out_h = int(current_w), int(current_h)
+                
+            if out_w <= 0 or out_h <= 0:
+                print("Invalid cropping region area after expansion.")
+                return None
+                
             dst_pts = np.array([
                 [0, 0],
                 [out_w - 1, 0],
@@ -371,7 +476,12 @@ class CroppingRegion:
             ], dtype=np.float32)
             
             M = cv2.getPerspectiveTransform(src_pts, dst_pts)
-            return cv2.warpPerspective(img, M, (out_w, out_h))
+            cropped = cv2.warpPerspective(img, M, (out_w, out_h))
+            
+            if target_size is not None:
+                cropped = cv2.resize(cropped, target_size)
+                
+            return cropped
 
     def inverse_apply(self, img: MatLike, target_shape: tuple[int, int]) -> MatLike | None:
         target_h, target_w = target_shape[:2]
