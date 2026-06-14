@@ -285,9 +285,7 @@ def run_training(
             ...
 
     # Optimize model parameters
-    print("Calculating class weights...")
-    pos_weight = calculate_weights(train_dataloader)
-    loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight) # Multi-class
+    loss_fn = nn.BCEWithLogitsLoss() # Multi-class
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     print("Finished initializing model, loss function and optimizer.")
 

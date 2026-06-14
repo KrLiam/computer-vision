@@ -205,12 +205,9 @@ class DatasetMenu(BoxLayout):
         self.cap_none_cb.bind(active=self._on_cap_none_change)
         
         self.info_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=30)
-        self.samples_label = Label(text="Samples: 0", size_hint_x=0.7, halign="left", valign="middle")
+        self.samples_label = Label(text="Dataset will be built on Train", halign="left", valign="middle")
         self.samples_label.bind(size=self.samples_label.setter('text_size'))
-        self.details_btn = Button(text="Details", size_hint_x=0.3)
-        self.details_btn.bind(on_release=self._open_details)
         self.info_layout.add_widget(self.samples_label)
-        self.info_layout.add_widget(self.details_btn)
         
         self.update_existing_datasets()
 
@@ -263,26 +260,10 @@ class DatasetMenu(BoxLayout):
         self._update_samples()
 
     def _update_samples(self, dt=0):
-        from project.dataset import get_dataset_samples, get_image_size_errors
-        patterns = self.frames_input.text.split()
-        self.samples = get_dataset_samples(
-            patterns,
-            cap_none=self.get_cap_none(),
-        )
-        try:
-            self.image_count, size_errors = get_image_size_errors(patterns)
-            self.size_error_count = len(size_errors)
-        except Exception as error:
-            self.image_count = 0
-            self.size_error_count = 1
-            self.samples_label.text = f"Image size check failed: {error}"
-            self._notify_change()
-            return
-
-        if self.size_error_count:
-            self.samples_label.text = f"Samples: {len(self.samples)} | {self.size_error_count} images not 640x128"
-        else:
-            self.samples_label.text = f"Samples: {len(self.samples)} | Images: {self.image_count}"
+        self.samples = None
+        self.image_count = 1 if self.frames_input.text.split() else 0
+        self.size_error_count = 0
+        self.samples_label.text = "Dataset will be built on Train"
         self._notify_change()
         
     def _open_details(self, instance):
@@ -304,7 +285,7 @@ class DatasetMenu(BoxLayout):
         return self.cap_none_cb.active
 
     def has_valid_image_sizes(self):
-        return not self.is_create or (self.image_count > 0 and self.size_error_count == 0)
+        return not self.is_create or bool(self.frames_input.text.split())
 
     def _notify_change(self):
         if self.on_change:
