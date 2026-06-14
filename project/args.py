@@ -153,6 +153,54 @@ def parse_args():
         help="Limit samples with no pressed notes to the count of the most frequent note",
     )
 
+    dataset_split_parser = dataset_subparsers.add_parser(
+        "split",
+        help="Build train and test datasets from images, like the recording interface auto split",
+    )
+    dataset_split_parser.add_argument(
+        "--images",
+        type=str,
+        nargs="+",
+        required=True,
+        help="Glob patterns for image files to include in the datasets",
+    )
+    dataset_split_parser.add_argument(
+        "--train-output",
+        type=str,
+        default="datasets/6_train.tar",
+        help="Output path for the training dataset",
+    )
+    dataset_split_parser.add_argument(
+        "--test-output",
+        type=str,
+        default="datasets/6_test.tar",
+        help="Output path for the test dataset",
+    )
+    dataset_split_parser.add_argument(
+        "--test-ratio",
+        type=float,
+        default=20,
+        help="Percentage or fraction of samples to put in the test dataset, e.g. 20 or 0.2",
+    )
+    dataset_split_parser.add_argument(
+        "--split-seed",
+        type=int,
+        default=42,
+        help="Random seed used to split train and test datasets",
+    )
+    dataset_split_parser.add_argument(
+        "--cap-none",
+        action="store_true",
+        default=True,
+        help="Limit samples with no pressed notes to the count of the most frequent note",
+    )
+    dataset_split_parser.add_argument(
+        "--no-cap-none",
+        action="store_false",
+        dest="cap_none",
+        help="Do not limit samples with no pressed notes",
+    )
+
     dataset_info_parser = dataset_subparsers.add_parser("info", help="Get dataset information")
     dataset_info_parser.add_argument(
         "--path",

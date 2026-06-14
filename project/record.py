@@ -7,6 +7,7 @@ import subprocess
 import sys
 import re
 import logging
+import queue
 from pathlib import Path
 import threading
 from collections import deque
@@ -35,7 +36,6 @@ from kivy.uix.dropdown import DropDown
 from kivy.uix.checkbox import CheckBox
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
-from kivy.uix.scrollview import ScrollView
 from kivy.uix.slider import Slider
 from kivy.uix.textinput import TextInput
 from kivy.uix.togglebutton import ToggleButton
@@ -48,6 +48,7 @@ logging.getLogger('PIL').setLevel(logging.WARNING)
 LAST_SKEW_CONFIG_PATH = Path("frames") / "last_skew.json"
 PRESETS_DIR = Path("presets")
 NONE_SAVE_PROBABILITY = 0.15
+SAVE_QUEUE_MAX_SIZE = 20
 
 
 def video_capture(device: str) -> cv2.VideoCapture:
@@ -128,55 +129,6 @@ def format_seconds_for_filename(seconds: float) -> str:
     if seconds.is_integer():
         return str(int(seconds))
     return f"{seconds:.2f}".rstrip("0").rstrip(".")
-
-
-class DetailsPopup(Popup):
-    def __init__(self, samples: dict[str, list], **kwargs):
-        super().__init__(title="Sample Details", size_hint=(0.6, 0.8), **kwargs)
-        
-        from collections import defaultdict
-        from project.midi import get_note_code
-        
-        note_counts = defaultdict(int)
-        valid_samples = 0
-        for key, frames in samples.items():
-            if len(frames) != 3:
-                continue
-            valid_samples += 1
-            name = os.path.basename(key)
-            notes = name.split('_')
-            notes = [note for note in notes if get_note_code(note) is not None]
-            if len(notes) == 0:
-                note_counts["None"] += 1
-            for note in notes:
-                note_counts[note] += 1
-        
-        sorted_counts = sorted(note_counts.items(), key=lambda k: -k[1])
-        
-        lines = [
-            f"Total valid samples: {valid_samples}\n",
-            "Samples per note:\n"
-        ]
-
-        for note, count in sorted_counts:
-            lines.append(f"{note}: {count}")
-            
-        text = "\n".join(lines)
-        
-        layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
-        sv = ScrollView(size_hint=(1, 1))
-        
-        label = Label(text=text, size_hint_y=None, halign='left', valign='top')
-        label.bind(size=label.setter('text_size'))
-        label.bind(texture_size=lambda instance, size: setattr(instance, 'height', size[1]))
-        sv.add_widget(label)
-        layout.add_widget(sv)
-        
-        close_btn = Button(text="Close", size_hint_y=None, height=40)
-        close_btn.bind(on_release=self.dismiss)
-        layout.add_widget(close_btn)
-        
-        self.content = layout
 
 
 class DatasetMenu(BoxLayout):
@@ -266,12 +218,6 @@ class DatasetMenu(BoxLayout):
         self.samples_label.text = "Dataset will be built on Train"
         self._notify_change()
         
-    def _open_details(self, instance):
-        if not hasattr(self, 'samples'):
-            return
-        popup = DetailsPopup(self.samples)
-        popup.open()
-
     def get_path(self):
         if self.is_create:
             return self.output_dataset_input.text
@@ -297,10 +243,10 @@ class TrainingPopup(Popup):
         super().__init__(title="Training", size_hint=(0.8, 0.9), **kwargs)
         layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
         
-        self.train_ds_menu = DatasetMenu("Train Dataset", "datasets/train_0.tar")
+        self.train_ds_menu = DatasetMenu("Train Dataset", "datasets/6_train.tar")
         layout.add_widget(self.train_ds_menu)
         
-        self.test_ds_menu = DatasetMenu("Test Dataset", "datasets/test_0.tar")
+        self.test_ds_menu = DatasetMenu("Test Dataset", "datasets/6_test.tar")
         layout.add_widget(self.test_ds_menu)
 
         layout.add_widget(Label(text="Dataset Split", size_hint_y=None, height=30, bold=True))
@@ -319,7 +265,7 @@ class TrainingPopup(Popup):
         self.batch_size_input = text_input("Batch size:", default="32")
         layout.add_widget(self.batch_size_input.parent)
         
-        self.output_model_input = text_input("Model:", default="models/0.pth")
+        self.output_model_input = text_input("Model:", default="models/6.pth")
         layout.add_widget(self.output_model_input.parent)
 
         self.start_from_scratch_cb = labelled_checkbox("Start from scratch:")
@@ -466,6 +412,26 @@ class Frame:
     time: datetime.datetime
     notes: set[Note] = field(default_factory=set)
 
+
+@dataclass(frozen=True, kw_only=True)
+class SaveJob:
+    frames: list[tuple[int, MatLike]]
+    notes_str: str
+    pressed_keys: int
+    hand: str
+    fingers: str
+    prefix: str | None
+    perturb_enabled: bool
+    perturb_config: dict[str, float]
+    transform_config: dict
+
+
+@dataclass(frozen=True, kw_only=True)
+class SaveResult:
+    label: str
+    paths: list[Path]
+
+
 class RecordingContainer(BoxLayout):
     frame_buffer: deque[Frame]
     popup: TrainingPopup | None
@@ -486,7 +452,12 @@ class RecordingContainer(BoxLayout):
         self.recording_enabled = False
         self.replace_enabled = True
         self.saved_items = 0
+        self.dropped_save_items = 0
         self.saved_history = []
+        self.save_queue: queue.Queue[SaveJob | None] = queue.Queue(maxsize=SAVE_QUEUE_MAX_SIZE)
+        self.save_results: queue.Queue[SaveResult | Exception] = queue.Queue()
+        self.save_worker = threading.Thread(target=self._save_worker_loop, daemon=True)
+        self.save_worker.start()
         self.selected_hand = "right_hand"
         self.selected_pressed_keys = "auto"
         self.selected_fingers = "1"
@@ -763,6 +734,7 @@ class RecordingContainer(BoxLayout):
             self.save_frame(-3)
 
         self._update_camera_view(frame.data)
+        self._drain_save_results()
         self._update_sidebar()
 
     def update_keyboard_area(self):
@@ -916,6 +888,19 @@ class RecordingContainer(BoxLayout):
 
         return perturbed
 
+    def _transform_snapshot(self) -> dict:
+        return {
+            "brightness": self.brightness_slider.value,
+            "exposure": self.exposure_slider.value,
+            "contrast": self.contrast_slider.value,
+            "gray": self.gray_cb.active,
+            "flip_x": self.flip_x_cb.active,
+            "flip_y": self.flip_y_cb.active,
+            "is_rect": self.cropping_region.is_rect,
+            "rect_points": self.cropping_region.rect_points,
+            "skew_points": self.cropping_region.skew_points,
+        }
+
     def save_frame(
         self,
         index: int,
@@ -927,6 +912,11 @@ class RecordingContainer(BoxLayout):
         
         if index < 0:
             self.scheduled_save = index
+            return
+
+        max_frame_idx = index + 2
+        if max_frame_idx >= len(self.frame_buffer):
+            print("Skipping save: not enough buffered frames yet.")
             return
 
         frame = self.frame_buffer[index]
@@ -941,16 +931,50 @@ class RecordingContainer(BoxLayout):
             if self.selected_pressed_keys == "auto"
             else int(self.selected_pressed_keys)
         )
-        saved_paths = []
+        job = SaveJob(
+            frames=[
+                (index + 2 - i, self.frame_buffer[index + 2 - i].data.copy())
+                for i in range(3)
+            ],
+            notes_str=notes_str,
+            pressed_keys=pressed_keys,
+            hand=self.selected_hand,
+            fingers=self.selected_fingers,
+            prefix=prefix,
+            perturb_enabled=self.perturb_save_cb.active,
+            perturb_config=self._perturbation_config(),
+            transform_config=self._transform_snapshot(),
+        )
 
-        config = self._perturbation_config()
-        params = self._random_perturbation(config)
+        try:
+            self.save_queue.put_nowait(job)
+        except queue.Full:
+            self.dropped_save_items += 1
+            print(f"Skipping {notes_str}: save queue is full ({SAVE_QUEUE_MAX_SIZE}).")
 
+    def _save_worker_loop(self):
+        while True:
+            job = self.save_queue.get()
+            if job is None:
+                self.save_queue.task_done()
+                break
+
+            try:
+                result = self._process_save_job(job)
+                if result is not None:
+                    self.save_results.put(result)
+            except Exception as error:
+                self.save_results.put(error)
+            finally:
+                self.save_queue.task_done()
+
+    def _process_save_job(self, job: SaveJob) -> SaveResult | None:
+        params = self._random_perturbation(job.perturb_config)
         cropped_frames = []
-        for i in range(3):
-            frame_idx = index + 2 - i
-            cropped = self._transform_frame(
-                self.frame_buffer[frame_idx].data,
+        for i, (frame_idx, data) in enumerate(job.frames):
+            cropped = self._transform_frame_from_config(
+                data,
+                job.transform_config,
                 offset=params["offset"],
             )
             if cropped is None:
@@ -958,57 +982,246 @@ class RecordingContainer(BoxLayout):
             cropped_frames.append((i, frame_idx, cropped))
 
         if len(cropped_frames) != 3:
-            return
+            return None
 
         variants: list[tuple[str | None, list[tuple[int, int, MatLike]]]] = [(None, cropped_frames)]
-        if self.perturb_save_cb.active:
+        if job.perturb_enabled:
             variants = []
             for variant_idx in range(3):
-                params = self._random_perturbation(config)
+                params = self._random_perturbation(job.perturb_config)
                 augmented_frames = [
                     (i, frame_idx, self._apply_perturbation(cropped, params))
                     for i, frame_idx, cropped in cropped_frames
                 ]
                 variants.append((f"aug{variant_idx + 1}", augmented_frames))
 
+        saved_paths = []
         for variant_name, frames in variants:
             for i, frame_idx, cropped in frames:
-                path = Path("frames") / self.selected_hand / str(pressed_keys) / self.selected_fingers
+                path = Path("frames") / job.hand / str(job.pressed_keys) / job.fingers
 
                 filename_parts = []
                 if variant_name:
                     filename_parts.append(variant_name)
-                if prefix:
-                    filename_parts.append(prefix)
-                filename_parts.append(notes_str)
+                if job.prefix:
+                    filename_parts.append(job.prefix)
+                filename_parts.append(job.notes_str)
                 filename = "_".join(filename_parts)
                 path /= f"{filename}_{i}.png"
 
                 path = self._resolve_save_path(path)
                 path.parent.mkdir(parents=True, exist_ok=True)
 
-                if cv2.imwrite(path, cropped):
+                if cv2.imwrite(str(path), cropped):
                     saved_paths.append(path)
                     print(f"Saved frame {frame_idx} to {path}")
                 else:
                     print(f"Could not save frame {frame_idx} to {path}")
 
         if not saved_paths:
-            return
+            return None
 
-        self.saved_items += 1
-        self.saved_history.append({
-            "label": (
-                f"{self.selected_hand}/{pressed_keys}/"
-                f"{self.selected_fingers}/{notes_str}"
-                f"{' x3 perturbed' if self.perturb_save_cb.active else ''}"
+        return SaveResult(
+            label=(
+                f"{job.hand}/{job.pressed_keys}/"
+                f"{job.fingers}/{job.notes_str}"
+                f"{' x3 perturbed' if job.perturb_enabled else ''}"
             ),
-            "paths": saved_paths,
-        })
-        self._save_last_skew_if_changed()
+            paths=saved_paths,
+        )
+
+    def _transform_frame_from_config(
+        self,
+        frame: MatLike,
+        config: dict,
+        padding: int = 10,
+        offset: tuple[int, int] = (0, 0),
+    ) -> MatLike | None:
+        exposure_scale = 2 ** config["exposure"]
+        transformed = np.clip(
+            frame.astype(np.float32) * exposure_scale * config["contrast"] + config["brightness"],
+            0,
+            255,
+        ).astype(np.uint8)
+
+        if config["gray"]:
+            transformed = cv2.cvtColor(transformed, cv2.COLOR_BGR2GRAY)
+            transformed = cv2.cvtColor(transformed, cv2.COLOR_GRAY2BGR)
+
+        if config["flip_y"]:
+            transformed = cv2.flip(transformed, 0)
+
+        if config["flip_x"]:
+            transformed = cv2.flip(transformed, 1)
+
+        return self._crop_from_config(
+            transformed,
+            config,
+            padding=padding,
+            offset=offset,
+            target_size=EXPECTED_IMAGE_SIZE,
+        )
+
+    def _crop_from_config(
+        self,
+        img: MatLike,
+        config: dict,
+        padding: int = 0,
+        offset: tuple[int, int] = (0, 0),
+        target_size: tuple[int, int] | None = None,
+    ) -> MatLike | None:
+        if config["is_rect"]:
+            p1, p2 = config["rect_points"]
+            if not p1 or not p2:
+                print("Invalid points. Cannot apply crop.")
+                return None
+
+            x1, y1 = min(p1[0], p2[0]), min(p1[1], p2[1])
+            x2, y2 = max(p1[0], p2[0]), max(p1[1], p2[1])
+
+            x1 += offset[0] - padding
+            x2 += offset[0] + padding
+            y1 += offset[1] - padding
+            y2 += offset[1] + padding
+
+            h, w = img.shape[:2]
+            if target_size is not None:
+                target_w, target_h = target_size
+                target_ratio = target_w / target_h
+                current_w = x2 - x1
+                current_h = y2 - y1
+                if current_h > 0:
+                    current_ratio = current_w / current_h
+                    factor = current_ratio / target_ratio
+                    new_h = current_h * factor
+                    diff = new_h - current_h
+                    y1 -= diff / 2
+                    y2 += diff / 2
+
+            cy1, cy2 = int(y1), int(y2)
+            cx1, cx2 = int(x1), int(x2)
+
+            pad_top = max(0, -cy1)
+            pad_bottom = max(0, cy2 - h)
+            pad_left = max(0, -cx1)
+            pad_right = max(0, cx2 - w)
+
+            cy1_clip, cy2_clip = max(0, cy1), min(h, cy2)
+            cx1_clip, cx2_clip = max(0, cx1), min(w, cx2)
+
+            if cx1_clip >= cx2_clip or cy1_clip >= cy2_clip:
+                print("Invalid cropping region area after expansion.")
+                return None
+
+            cropped = img[cy1_clip:cy2_clip, cx1_clip:cx2_clip]
+            if pad_top > 0 or pad_bottom > 0 or pad_left > 0 or pad_right > 0:
+                cropped = cv2.copyMakeBorder(
+                    cropped,
+                    pad_top,
+                    pad_bottom,
+                    pad_left,
+                    pad_right,
+                    cv2.BORDER_CONSTANT,
+                    value=(0, 0, 0),
+                )
+
+            if target_size is not None:
+                cropped = cv2.resize(cropped, target_size)
+            return cropped
+
+        tl, tr, bl, br = config["skew_points"]
+        if not tl or not tr or not bl or not br:
+            print("Invalid points. Cannot apply crop.")
+            return None
+
+        tl = (tl[0] + offset[0] - padding, tl[1] + offset[1] - padding)
+        tr = (tr[0] + offset[0] + padding, tr[1] + offset[1] - padding)
+        bl = (bl[0] + offset[0] - padding, bl[1] + offset[1] + padding)
+        br = (br[0] + offset[0] + padding, br[1] + offset[1] + padding)
+
+        h_img, w_img = img.shape[:2]
+
+        def clip(pt):
+            return (max(0, min(w_img, pt[0])), max(0, min(h_img, pt[1])))
+
+        tl = clip(tl)
+        tr = clip(tr)
+        bl = clip(bl)
+        br = clip(br)
+
+        src_pts = np.array([tl, tr, br, bl], dtype=np.float32)
+        width_top = np.linalg.norm(src_pts[0] - src_pts[1])
+        width_bot = np.linalg.norm(src_pts[3] - src_pts[2])
+        current_w = max(width_top, width_bot)
+        height_left = np.linalg.norm(src_pts[0] - src_pts[3])
+        height_right = np.linalg.norm(src_pts[1] - src_pts[2])
+        current_h = max(height_left, height_right)
+
+        if current_w <= 0 or current_h <= 0:
+            print("Invalid cropping region area.")
+            return None
+
+        if target_size is not None:
+            target_w, target_h = target_size
+            target_ratio = target_w / target_h
+            current_ratio = current_w / current_h
+            factor = current_ratio / target_ratio
+            new_h = current_h * factor
+            diff = new_h - current_h
+
+            tl = (tl[0], tl[1] - diff / 2)
+            tr = (tr[0], tr[1] - diff / 2)
+            bl = (bl[0], bl[1] + diff / 2)
+            br = (br[0], br[1] + diff / 2)
+
+            src_pts = np.array([tl, tr, br, bl], dtype=np.float32)
+            out_w, out_h = int(current_w), int(new_h)
+        else:
+            out_w, out_h = int(current_w), int(current_h)
+
+        if out_w <= 0 or out_h <= 0:
+            print("Invalid cropping region area after expansion.")
+            return None
+
+        dst_pts = np.array(
+            [[0, 0], [out_w - 1, 0], [out_w - 1, out_h - 1], [0, out_h - 1]],
+            dtype=np.float32,
+        )
+        matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
+        cropped = cv2.warpPerspective(img, matrix, (out_w, out_h))
+
+        if target_size is not None:
+            cropped = cv2.resize(cropped, target_size)
+        return cropped
+
+    def _drain_save_results(self):
+        changed = False
+        while True:
+            try:
+                result = self.save_results.get_nowait()
+            except queue.Empty:
+                break
+
+            if isinstance(result, Exception):
+                print(f"Save worker failed: {result}")
+            else:
+                self.saved_items += 1
+                self.saved_history.append({
+                    "label": result.label,
+                    "paths": result.paths,
+                })
+                changed = True
+            self.save_results.task_done()
+
+        if changed:
+            self._save_last_skew_if_changed()
 
     def _update_sidebar(self):
-        self.saved_counter_label.text = f"Saved items: {self.saved_items}"
+        self.saved_counter_label.text = (
+            f"Saved items: {self.saved_items} | "
+            f"Queue: {self.save_queue.qsize()} | "
+            f"Dropped: {self.dropped_save_items}"
+        )
         self._update_recent_saved_label()
         self._update_preset_status()
 
@@ -1181,8 +1394,7 @@ class RecordingContainer(BoxLayout):
                 print(f"Could not remove {path}: {exc}")
 
         self.saved_items = max(0, self.saved_items - 1)
-        self._update_recent_saved_label()
-        self.saved_counter_label.text = f"Saved items: {self.saved_items}"
+        self._update_sidebar()
         print(f"Undid {item['label']} ({removed} files removed).")
 
     def _update_recent_saved_label(self):
@@ -1270,6 +1482,10 @@ class RecordingContainer(BoxLayout):
         self.selected_fingers = value
         
     def on_stop(self):
+        try:
+            self.save_queue.put_nowait(None)
+        except queue.Full:
+            ...
         if self.midi_listener:
             self.midi_listener.stop()
 

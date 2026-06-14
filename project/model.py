@@ -261,7 +261,7 @@ def calculate_weights(dataloader: DataLoader) -> torch.Tensor:
 def run_training(
     train_dataset: str,
     test_dataset: str,
-    batch_size: int = 32,
+    batch_size: int = 128,
     test_frequency: float = 1.0,
     epochs: int = 20,
     model_path: str = MODEL_PATH,
@@ -285,7 +285,9 @@ def run_training(
             ...
 
     # Optimize model parameters
-    loss_fn = nn.BCEWithLogitsLoss() # Multi-class
+    print("Calculating class weights...")
+    pos_weight = calculate_weights(train_dataloader)
+    loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight) # Multi-class
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     print("Finished initializing model, loss function and optimizer.")
 
@@ -326,7 +328,7 @@ def run_training(
 
 def run_test(
     test_dataset: str,
-    batch_size: int = 32,
+    batch_size: int = 128,
     model_path: str = MODEL_PATH,
 ):
     # Dataset

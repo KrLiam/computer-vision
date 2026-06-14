@@ -19,6 +19,7 @@ from torchvision.transforms import ToTensor
 from project.midi import format_note, get_note_code, tensor_to_notes
 
 EXPECTED_IMAGE_SIZE = (640, 128)
+PT_DATASET_MEMORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
 
 
 def get_image_paths(patterns: list[str]) -> list[str]:
@@ -300,6 +301,16 @@ def build_dataset_from_samples(
 
         print(f"Dataset saved to {output_path} with {len(metadata)} samples")
     else:
+        estimated_bytes = len(samples) * 3 * EXPECTED_IMAGE_SIZE[0] * EXPECTED_IMAGE_SIZE[1] * 4
+        if estimated_bytes > PT_DATASET_MEMORY_LIMIT_BYTES:
+            estimated_gb = estimated_bytes / 1024**3
+            limit_gb = PT_DATASET_MEMORY_LIMIT_BYTES / 1024**3
+            raise MemoryError(
+                f"Refusing to build '{output_path}' as a .pt dataset because it would "
+                f"allocate about {estimated_gb:.1f} GB in memory (limit: {limit_gb:.1f} GB). "
+                "Use a .tar output path instead, e.g. datasets/6_train.tar."
+            )
+
         x_tensors = []
         y_tensors = []
 
@@ -348,8 +359,8 @@ def build_dataset(
 
 def build_train_test_datasets(
     patterns: list[str],
-    train_output_path: str = "datasets/train_0.tar",
-    test_output_path: str = "datasets/test_0.tar",
+    train_output_path: str = "datasets/6_train.tar",
+    test_output_path: str = "datasets/6_test.tar",
     test_ratio: float = 0.2,
     seed: int = 42,
     first_note: int = 36, # C2

@@ -1,5 +1,11 @@
 from project.args import parse_args
 
+
+def normalize_test_ratio(value: float) -> float:
+    if value > 1:
+        value /= 100
+    return value
+
 def run():
     args = parse_args()
 
@@ -31,7 +37,7 @@ def run():
                             args.images,
                             train_output_path=args.output,
                             test_output_path=args.test_output,
-                            test_ratio=args.test_ratio,
+                            test_ratio=normalize_test_ratio(args.test_ratio),
                             seed=args.split_seed,
                             cap_none=args.cap_none,
                         )
@@ -42,6 +48,15 @@ def run():
                             cap_none=args.cap_none,
                             seed=args.split_seed,
                         )
+                case "split":
+                    build_train_test_datasets(
+                        args.images,
+                        train_output_path=args.train_output,
+                        test_output_path=args.test_output,
+                        test_ratio=normalize_test_ratio(args.test_ratio),
+                        seed=args.split_seed,
+                        cap_none=args.cap_none,
+                    )
                 case "info":
                     dataset_info(args.path, sort=args.sort)
                 case "record":
