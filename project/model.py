@@ -16,7 +16,7 @@ DEVICE = (
     if torch.accelerator.is_available()
     else "cpu"
 )
-# print(f"Using {device} device")
+print(f"Using {DEVICE} device")
 
 MODEL_PATH = "model.pth"
 

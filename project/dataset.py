@@ -411,8 +411,9 @@ def load_dataset(path: str = "dataset.tar", batch_size: int = 32, shuffle: bool 
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
-        num_workers=0,
-        pin_memory=True
+        num_workers=2,
+        pin_memory=True,
+        persistent_workers=True,
     )
 
 def dataset_info(path: str, first_note: int = 36, sort: bool = False):
