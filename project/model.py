@@ -261,7 +261,7 @@ def calculate_weights(dataloader: DataLoader) -> torch.Tensor:
 def run_training(
     train_dataset: str,
     test_dataset: str,
-    batch_size: int = 128,
+    batch_size: int = 32,
     test_frequency: float = 1.0,
     epochs: int = 20,
     model_path: str = MODEL_PATH,
@@ -328,7 +328,7 @@ def run_training(
 
 def run_test(
     test_dataset: str,
-    batch_size: int = 128,
+    batch_size: int = 32,
     model_path: str = MODEL_PATH,
 ):
     # Dataset

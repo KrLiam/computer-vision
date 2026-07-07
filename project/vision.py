@@ -32,6 +32,7 @@ from project.image_view import ImageView
 LAST_SKEW_CONFIG_PATH = Path("frames") / "last_skew.json"
 CAMERA_PRESET_OPTION = "Camera"
 ALL_PRESETS_OPTION = "All presets"
+MODELS_DIR = Path("models")
 
 
 def labelled_slider(
@@ -119,6 +120,24 @@ class VisionContainer(BoxLayout):
             current_mtime = os.path.getmtime(self.model_path)
             if self.last_mod_time is None or current_mtime > self.last_mod_time:
                 self._load_current_model()
+
+    def _model_options(self) -> list[str]:
+        MODELS_DIR.mkdir(exist_ok=True)
+        return [
+            str(path.relative_to(MODELS_DIR))
+            for path in sorted(MODELS_DIR.rglob("*.pth"))
+            if path.is_file()
+        ]
+
+    def _model_dropdown_name(self) -> str:
+        if not self.model_path:
+            return ""
+
+        path = Path(self.model_path)
+        try:
+            return str(path.resolve().relative_to(MODELS_DIR.resolve()))
+        except ValueError:
+            return path.name
         
 
     def build(self, initial_frame: MatLike | None):
@@ -130,18 +149,19 @@ class VisionContainer(BoxLayout):
 
         sidebar = BoxLayout(orientation='vertical', size_hint=(0.3, 1.0))
 
-        models = [f for f in os.listdir("models") if f.endswith(".pth")]
-        initial_model_name = os.path.basename(self.model_path) if self.model_path else ""
+        models = self._model_options()
+        initial_model_name = self._model_dropdown_name()
         if initial_model_name not in models and models:
             initial_model_name = models[0]
-            self.model_path = os.path.join("models", initial_model_name)
+            self.model_path = str(MODELS_DIR / initial_model_name)
             
         model_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=36)
         self.model_dropdown = labelled_dropdown(
             "Model:",
             models,
             initial_model_name,
-            self._on_model_select
+            self._on_model_select,
+            max_height=260,
         )
         model_layout.add_widget(self.model_dropdown.parent)
         
@@ -654,14 +674,13 @@ class VisionContainer(BoxLayout):
 
     def _on_model_select(self, val):
         if val:
-            self.model_path = os.path.join("models", val)
+            self.model_path = str(MODELS_DIR / val)
         else:
             self.model_path = None
         self._load_current_model()
 
     def _on_refresh_models(self, *_):
-        os.makedirs("models", exist_ok=True)
-        models = [f for f in os.listdir("models") if f.endswith(".pth")]
+        models = self._model_options()
         dropdown = self.model_dropdown.dropdown
         dropdown.clear_widgets()
         for option in models:
