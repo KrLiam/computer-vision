@@ -341,12 +341,9 @@ def run_test(
         load_model(model_path, model)
         print(f"Model '{model_path}' loaded successfully!")
     except FileNotFoundError:
-        ...
+        print("File not found")
+        return
 
-    #pos_weight = calculate_weights(train_dataloader)
-    loss_fn = nn.BCEWithLogitsLoss(
-        #pos_weight=pos_weight
-    ) # Multi-class
-
+    loss_fn = nn.BCEWithLogitsLoss()
     test(test_dataloader, model, loss_fn)
 
