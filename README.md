@@ -63,7 +63,7 @@ python -m project train --train-dataset datasets/6_train.tar --test-dataset data
 
 python -m project crop --path frames/**/*.png
 
- python -m project vision --model model.pth --camera "0"
+python -m project vision --model model.pth --camera "0"
 
 ## Frames
 
