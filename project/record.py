@@ -852,7 +852,7 @@ class RecordingContainer(BoxLayout):
         if epoch_match:
             self.train_epoch = epoch_match.group(1)
             
-        acc_match = re.search(r"Accuracy:\s*([\d\.]+%)", t)
+        acc_match = re.search(r"Correct:\s*([\d\.]+%)", t)
         if acc_match:
             self.train_accuracy = acc_match.group(1)
 

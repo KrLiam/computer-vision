@@ -77,6 +77,28 @@ def train(dataloader, model, loss_fn, optimizer):
         print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
 
+
+def test_accuracy(tp, tn, total):
+    if total == 0:
+        return 0.0
+    return (tp + tn) / total
+
+def test_precision(tp, fp):
+    if (tp + fp) == 0:
+        return 0.0
+    return tp / (tp + fp)
+
+def test_revocation(tp, fn):
+    if (tp + fn) == 0:
+        return 0.0
+    return tp / (tp + fn)
+
+def test_f1(precision, revocation):
+    if (precision + revocation) == 0:
+        return 0.0
+    return 2 * (precision * revocation) / (precision + revocation)
+
+
 def test(dataloader, model, loss_fn):
     """
     Tests the model against the test dataset.
@@ -88,6 +110,7 @@ def test(dataloader, model, loss_fn):
     num_batches = len(dataloader)
     model.eval()
     test_loss, correct = 0, 0
+    tp, tn, fp, fn, total = 0, 0, 0, 0, 0
 
     min_pred, max_pred = 1.0, 0.0
 
@@ -109,9 +132,35 @@ def test(dataloader, model, loss_fn):
 
             test_loss += loss_fn(pred, y).item()
             correct += ((pred_prob > 0.5) == (y > 0.5)).all(dim=1).type(torch.float).sum().item()
+            
+            y_bool = y > 0.5
+            pred_bool = pred_prob > 0.5
+            
+            # y é todo false (nenhuma nota está sendo tocada)
+            y_all_false = ~y_bool.any(dim=1, keepdim=True)
+            
+            # y[i] ou pred_prob[i] é true (maior que 0.5)
+            y_or_pred_yes = y_bool | pred_bool
+            
+            # mask para as entradas que devem ser avaliadas
+            mask = y_all_false | y_or_pred_yes
+            
+            tp += (mask & y_bool & pred_bool).sum().item()
+            tn += (mask & ~y_bool & ~pred_bool).sum().item()
+            fp += (mask & ~y_bool & pred_bool).sum().item()
+            fn += (mask & y_bool & ~pred_bool).sum().item()
+            total += mask.sum().item()
+
     test_loss /= num_batches
     correct /= size
-    print(f"Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f}, Pred Range: [{min_pred:>0.4f}, {max_pred:>0.4f}]\n")
+    print(f"Correct: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f}, Pred Range: [{min_pred:>0.4f}, {max_pred:>0.4f}]")
+    print(f"TP: {tp}, TN: {tn}, FP: {fp}, FN: {fn}, Total: {total}")
+    
+    acc = test_accuracy(tp, tn, total)
+    prec = test_precision(tp, fp)
+    rev = test_revocation(tp, fn)
+    f1 = test_f1(prec, rev)
+    print(f"Accuracy: {(100*acc):>0.2f}%, Precision: {(100*prec):>0.2f}%, Revocation: {(100*rev):>0.2f}%, F1-Score: {(100*f1):>0.2f}%")
 
     return correct
 
