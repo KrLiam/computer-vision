@@ -29,8 +29,10 @@ def run():
                 model_path=args.model,
             )
         case "dataset":
-            from project.dataset import build_dataset, build_train_test_datasets, dataset_info
+            from project.dataset import build_dataset, build_train_test_datasets, dataset_info, convert_dataset
             match args.dataset_command:
+                case "convert":
+                    convert_dataset(args.path1, args.path2)
                 case "build":
                     if args.test_output:
                         build_train_test_datasets(

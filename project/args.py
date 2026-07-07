@@ -214,6 +214,19 @@ def parse_args():
         default=False,
         help="Sort the note distribution by frequency",
     )
+
+    dataset_convert_parser = dataset_subparsers.add_parser("convert", help="Convert dataset between formats")
+    dataset_convert_parser.add_argument(
+        "path1",
+        type=str,
+        help="Source dataset path",
+    )
+    dataset_convert_parser.add_argument(
+        "path2",
+        type=str,
+        help="Target dataset path",
+    )
+
     # Test command
     test_parser = subparsers.add_parser("test", help="Run model inference on a random test sample")
     test_parser.add_argument(

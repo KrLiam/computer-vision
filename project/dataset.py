@@ -467,3 +467,65 @@ def dataset_info(path: str, first_note: int = 36, sort: bool = False):
         for i in range(y_tensors.shape[1]):
             note_code = i + first_note
             print(f"{format_note(note_code)}: {distribution[note_code]}")
+
+
+def convert_dataset(path1: str, path2: str):
+    if path1.endswith(".tar") and path2.endswith(".pt"):
+        print(f"Converting {path1} to {path2}...")
+        dataset = TarDataset(path1)
+        
+        x_tensors = []
+        y_tensors = []
+        
+        for i in range(len(dataset)):
+            x, y = dataset[i]
+            x_tensors.append(x)
+            y_tensors.append(y)
+            
+        data = { 'x': torch.stack(x_tensors), 'y': torch.stack(y_tensors) }
+        torch.save(data, path2)
+        print(f"Dataset saved to {path2}")
+    elif path1.endswith(".pt") and path2.endswith(".tar"):
+        print(f"Converting {path1} to {path2}...")
+        data = torch.load(path1, weights_only=True)
+        x_tensors = data['x']
+        y_tensors = data['y']
+        
+        Path(path2).parent.mkdir(parents=True, exist_ok=True)
+        metadata = []
+        
+        with tarfile.open(path2, "w") as tar:
+            for i in range(len(x_tensors)):
+                x = x_tensors[i]
+                y = y_tensors[i]
+                
+                sample_meta = {
+                    "id": i,
+                    "y": y.tolist(),
+                    "frames": []
+                }
+                
+                for f_idx in range(x.shape[0]):
+                    frame_tensor = x[f_idx]
+                    img = Image.fromarray((frame_tensor.numpy() * 255).astype('uint8'), mode='L')
+                    
+                    img_byte_arr = io.BytesIO()
+                    img.save(img_byte_arr, format='PNG')
+                    img_bytes = img_byte_arr.getvalue()
+                    
+                    arcname = f"sample_{i}_{f_idx}.png"
+                    img_info = tarfile.TarInfo(arcname)
+                    img_info.size = len(img_bytes)
+                    tar.addfile(img_info, io.BytesIO(img_bytes))
+                    
+                    sample_meta["frames"].append(arcname)
+                    
+                metadata.append(sample_meta)
+                
+            meta_bytes = json.dumps(metadata).encode('utf-8')
+            meta_info = tarfile.TarInfo("metadata.json")
+            meta_info.size = len(meta_bytes)
+            tar.addfile(meta_info, io.BytesIO(meta_bytes))
+        print(f"Dataset saved to {path2}")
+    else:
+        print("Only .tar <-> .pt conversion is currently supported.")
